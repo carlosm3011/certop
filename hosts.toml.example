@@ -1,13 +1,22 @@
 # Inventario de ejemplo. Cada tabla es un grupo; la clave `hosts` lista los
 # destinos en formato host:puerto.
+#
+# `expect` fija el nombre que se manda en SNI y contra el que se valida el
+# certificado. Sirve para los nodos que estan detras de un CNAME y cuyo
+# certificado nunca lleva el nombre propio del nodo. Se puede poner a nivel de
+# grupo, o por entrada con la forma { addr = "...", expect = "..." }.
+#
+# Cada nombre se expande en una fila por cada registro A y AAAA que resuelva.
 
 [frontends]
+expect = "rrdp.lacnic.net"
 hosts = [
   "rpki-fe-1.lacnic.net:443",
   "rpki-fe-2.lacnic.net:443",
 ]
 
 [rpki-load-balancers]
+expect = "rrdp.lacnic.net"
 hosts = [
   "lb-rpki-1.lacnic.net:443",
   "lb-rpki-2.lacnic.net:443",
@@ -17,6 +26,8 @@ hosts = [
 [email]
 hosts = [
   "mail.lacnic.net:993",
+  # Override puntual del expect del grupo (aca no hay grupo, es solo ejemplo):
+  # { addr = "otro.lacnic.net:443", expect = "www.lacnic.net" },
   "mail.lacnic.net.uy:993",
   "mail.lacnic.net.uy:465",
 ]

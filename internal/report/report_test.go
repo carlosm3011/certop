@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	"encoding/csv"
 	"encoding/json"
+	"net"
 	"strings"
 	"testing"
 	"time"
@@ -18,7 +19,9 @@ var checkedAt = time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC)
 
 func sample() []probe.Result {
 	ok := probe.Result{
-		Target:     inventory.Target{Group: "frontends", Host: "rpki-fe-1.lacnic.net", Port: "443", Addr: "rpki-fe-1.lacnic.net:443"},
+		Target:     inventory.Target{Group: "frontends", Host: "rpki-fe-1.lacnic.net", Port: "443", Addr: "rpki-fe-1.lacnic.net:443", Expect: "rrdp.lacnic.net"},
+		IP:         net.ParseIP("172.233.162.16"),
+		AF:         4,
 		TCP:        probe.TCPOK,
 		Leaf:       &x509.Certificate{},
 		NotAfter:   checkedAt.Add(45 * 24 * time.Hour),
@@ -37,6 +40,8 @@ func sample() []probe.Result {
 	}
 	down := probe.Result{
 		Target:    inventory.Target{Group: "email", Host: "mail.lacnic.net.uy", Port: "465", Addr: "mail.lacnic.net.uy:465"},
+		IP:        net.ParseIP("2001:db8::1"),
+		AF:        6,
 		TCP:       probe.TCPRefused,
 		CheckedAt: checkedAt,
 	}
@@ -58,18 +63,33 @@ func TestWriteCSV(t *testing.T) {
 	if len(rows[0]) != len(csvHeader) {
 		t.Errorf("encabezado con %d columnas, want %d", len(rows[0]), len(csvHeader))
 	}
-	if rows[1][0] != "frontends" || rows[1][5] != "45" || rows[1][7] != "OK" {
+	col := func(row []string, name string) string {
+		for i, h := range csvHeader {
+			if h == name {
+				return row[i]
+			}
+		}
+		t.Fatalf("columna %q no esta en el encabezado", name)
+		return ""
+	}
+	if col(rows[1], "grupo") != "frontends" || col(rows[1], "dias_restantes") != "45" || col(rows[1], "estado_cert") != "OK" {
 		t.Errorf("fila ok = %v", rows[1])
 	}
-	if rows[1][12] != "no" || rows[1][15] != "si" {
-		t.Errorf("matriz de versiones = %v", rows[1][12:])
+	if col(rows[1], "af") != "4" || col(rows[1], "ip") != "172.233.162.16" {
+		t.Errorf("af/ip = %q/%q", col(rows[1], "af"), col(rows[1], "ip"))
+	}
+	if col(rows[2], "af") != "6" || col(rows[2], "ip") != "2001:db8::1" {
+		t.Errorf("af/ip v6 = %q/%q", col(rows[2], "af"), col(rows[2], "ip"))
+	}
+	if col(rows[1], "tls10") != "no" || col(rows[1], "tls13") != "si" {
+		t.Errorf("matriz de versiones = %v", rows[1])
 	}
 	// Un destino caido deja los campos de certificado vacios, no en cero.
-	if rows[2][4] != "" || rows[2][5] != "" {
+	if col(rows[2], "expira_utc") != "" || col(rows[2], "dias_restantes") != "" {
 		t.Errorf("destino caido deberia tener expiracion vacia: %v", rows[2])
 	}
-	if rows[2][3] != "rechazado" {
-		t.Errorf("tcp = %q", rows[2][3])
+	if col(rows[2], "tcp") != "rechazado" {
+		t.Errorf("tcp = %q", col(rows[2], "tcp"))
 	}
 }
 
@@ -79,7 +99,7 @@ func TestWriteTable(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := buf.String()
-	for _, want := range []string{"GRUPO", "rpki-fe-1.lacnic.net", "--23", "45d", "Let's Encrypt R11", "rechazado", Legend} {
+	for _, want := range []string{"GRUPO", "AF", "IP", "rpki-fe-1.lacnic.net", "172.233.162.16", "2001:db8::1", "--23", "45d", "Let's Encrypt R11", "rechazado", Legend} {
 		if !strings.Contains(out, want) {
 			t.Errorf("falta %q en:\n%s", want, out)
 		}
@@ -104,6 +124,16 @@ func TestWriteJSON(t *testing.T) {
 	}
 	if tlsMap["1.3"] != true || tlsMap["1.0"] != false {
 		t.Errorf("matriz = %v", tlsMap)
+	}
+	if got[0]["af"] != float64(4) || got[0]["ip"] != "172.233.162.16" {
+		t.Errorf("af/ip = %v/%v", got[0]["af"], got[0]["ip"])
+	}
+	if got[0]["expect"] != "rrdp.lacnic.net" {
+		t.Errorf("expect = %v", got[0]["expect"])
+	}
+	// Sin expect la clave se omite.
+	if _, ok := got[1]["expect"]; ok {
+		t.Errorf("expect no deberia aparecer: %v", got[1]["expect"])
 	}
 	if got[0]["dias_restantes"] != float64(45) {
 		t.Errorf("dias_restantes = %v", got[0]["dias_restantes"])

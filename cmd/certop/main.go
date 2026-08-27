@@ -21,7 +21,7 @@ import (
 
 // version la sobreescribe el Makefile con -ldflags -X, agregandole la revision
 // de git; este valor es el que queda al compilar con go build a secas.
-var version = "0.9.1"
+var version = "1.0"
 
 type options struct {
 	once        bool
@@ -52,7 +52,7 @@ func run(args []string, stdout, stderr *os.File) int {
 	fs.StringVar(&opt.file, "file", "hosts.toml", "archivo TOML de inventario")
 	fs.StringVar(&opt.file, "f", "hosts.toml", "abreviatura de --file")
 	fs.StringVar(&opt.format, "format", report.FormatCSV, "formato de salida de --once: csv, table o json")
-	fs.IntVar(&opt.warnDays, "warn-days", -1, "exit code 2 si algun destino falla o expira en menos de N dias")
+	fs.IntVar(&opt.warnDays, "warn-days", -1, "umbral de dias por vencer; con --once ademas da exit code 2 (default 30 en pantalla)")
 	fs.BoolVar(&opt.probeAlways, "probe-always", false, "resondea las versiones TLS en cada refresco")
 	fs.IntVar(&opt.workers, "workers", 32, "cantidad maxima de chequeos concurrentes")
 	fs.DurationVar(&opt.timeout, "timeout", 5*time.Second, "timeout por destino")
@@ -87,7 +87,13 @@ func run(args []string, stdout, stderr *os.File) int {
 
 	if opt.refresh > 0 {
 		interval := time.Duration(opt.refresh) * time.Second
-		if err := ui.Run(ctx, checker, targets, interval); err != nil {
+		// En pantalla el umbral se usa siempre; --warn-days lo ajusta si el
+		// usuario lo fijo, y si no rige el default.
+		warnDays := probe.DefaultWarnDays
+		if opt.warnDays >= 0 {
+			warnDays = opt.warnDays
+		}
+		if err := ui.Run(ctx, checker, targets, interval, warnDays); err != nil {
 			fmt.Fprintf(stderr, "certop: %v\n", err)
 			return report.ExitUsage
 		}

@@ -30,11 +30,47 @@ hosts = [
 ]
 ```
 
-Un mismo host puede aparecer varias veces con puertos distintos (ver `mail.lacnic.net.uy`). El formato `host:puerto` es el que consume directamente `net.Dial` en Go.
+Un mismo host puede aparecer varias veces con puertos distintos (ver `mail.lacnic.net.uy`).
+
+## Nombre esperado
+
+Los nodos que estan detras de un CNAME sirven el certificado del servicio, no uno
+con su propio nombre: `fe-172-233-162-16.rrdp.lacnic.net` presenta un `*.lacnic.net`,
+que cubre `rrdp.lacnic.net` pero no un nombre de segundo nivel. Reportarlos como
+`NOMBRE-NO-COINCIDE` es ruido.
+
+La clave `expect` fija el nombre que se manda en **SNI** y contra el que se **valida**
+el certificado, que es lo que hace un cliente real que llega por el CNAME. Se declara
+a nivel de grupo y se puede pisar por entrada:
+
+```toml
+[rpki-frontends]
+expect = "rrdp.lacnic.net"
+hosts = [
+  "fe-172-233-162-16.rrdp.lacnic.net:443",
+  { addr = "otro.lacnic.net:443", expect = "www.lacnic.net" },
+]
+```
+
+Una entrada sigue pudiendo ser un simple `"host:puerto"`.
+
+## Familias de direcciones
+
+Cada nombre se expande en **una fila por cada registro A y AAAA** que resuelva. Un
+config actualizado en IPv4 y olvidado en IPv6 es una falla que ya ocurrio, y solo se ve
+chequeando cada direccion por separado.
+
+Las direcciones se ordenan v4 antes que v6 y por bytes dentro de cada familia: el DNS
+rota el orden entre consultas y sin eso las filas saltarian de lugar en cada refresco.
+Un literal IP en el inventario no se resuelve. Si el nombre no resuelve queda una fila
+con estado `dns`, para que el problema se vea en vez de desaparecer la fila.
+
+La columna `AF` vale `4` o `6`; la IP concreta se muestra en pantalla cuando el ancho
+alcanza, y siempre en CSV y JSON.
 
 La salida en modo repeticion debe ser una tabla:
 
-grupo | host | puerto | estado del socket tcp | expiracion del cert | emisor | estado del cert |
+grupo | host | AF | IP | puerto | estado del socket tcp | expiracion del cert | emisor | estado del cert |
 
 Los flags son:
 
@@ -77,6 +113,18 @@ obtiene siempre; la validacion se corre aparte y su resultado se muestra como un
 columna de estado (`OK`, `EXPIRADO`, `SELF-SIGNED`, `NOMBRE NO COINCIDE`, `CADENA
 INCOMPLETA`, ...). Un host con certificado invalido igual muestra expiracion y emisor
 — suele ser justamente el host por el que se abrio la herramienta.
+
+## Problemas y avisos
+
+La pantalla separa las filas en dos categorias, que no piden la misma reaccion:
+
+- **problema**: destino inalcanzable, sin certificado, o certificado invalido
+  (vencido, autofirmado, nombre que no coincide, cadena no confiable). En rojo.
+- **por vencer**: certificado valido que vence dentro del umbral, 30 dias por defecto
+  o lo que fije `--warn-days`. En amarillo, resaltado si faltan menos de 7 dias.
+
+Contarlos juntos escondia lo que importa: un nombre que no coincide hay que arreglarlo,
+un certificado que vence en tres semanas solo hay que renovarlo a tiempo.
 
 ## Salida y exit code
 

@@ -39,7 +39,7 @@ func Write(w io.Writer, results []probe.Result, format string) error {
 }
 
 var csvHeader = []string{
-	"grupo", "host", "puerto", "tcp", "expira_utc", "dias_restantes",
+	"grupo", "host", "puerto", "af", "ip", "tcp", "expira_utc", "dias_restantes",
 	"emisor", "estado_cert", "tls_negociada", "cipher", "clave", "firma",
 	"tls10", "tls11", "tls12", "tls13",
 }
@@ -53,7 +53,7 @@ func WriteCSV(w io.Writer, results []probe.Result) error {
 	}
 	for _, r := range results {
 		row := []string{
-			r.Group, r.Host, r.Port, r.TCP.String(),
+			r.Group, r.Host, r.Port, r.AFText(), r.IPText(), r.TCP.String(),
 			expiryUTC(r), daysField(r), r.Issuer, r.CertStatus.String(),
 			r.NegVersionName(), r.NegCipherName(), r.KeyType, r.SigAlg,
 		}
@@ -71,13 +71,13 @@ func WriteCSV(w io.Writer, results []probe.Result) error {
 // WriteTable escribe una tabla alineada legible.
 func WriteTable(w io.Writer, results []probe.Result) error {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	if _, err := fmt.Fprintln(tw, "GRUPO\tHOST\tPUERTO\tTCP\tEXPIRA\tTLS\tEMISOR\tESTADO"); err != nil {
+	if _, err := fmt.Fprintln(tw, "GRUPO\tHOST\tAF\tIP\tPUERTO\tTCP\tEXPIRA\tTLS\tEMISOR\tESTADO"); err != nil {
 		return err
 	}
 	for _, r := range results {
-		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-			r.Group, r.Host, r.Port, r.TCP, r.ExpiryText(), r.TLSDigits(),
-			dash(r.Issuer), r.CertStatus); err != nil {
+		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			r.Group, r.Host, r.AFText(), r.IPText(), r.Port, r.TCP, r.ExpiryText(),
+			r.TLSDigits(), dash(r.Issuer), r.CertStatus); err != nil {
 			return err
 		}
 	}
@@ -95,6 +95,9 @@ type jsonResult struct {
 	Group      string         `json:"grupo"`
 	Host       string         `json:"host"`
 	Port       string         `json:"puerto"`
+	Expect     string         `json:"expect,omitempty"`
+	AF         int            `json:"af"`
+	IP         string         `json:"ip"`
 	TCP        string         `json:"tcp"`
 	Expires    *time.Time     `json:"expira_utc"`
 	DaysLeft   *int           `json:"dias_restantes"`
@@ -122,6 +125,9 @@ func WriteJSON(w io.Writer, results []probe.Result) error {
 			Group:      r.Group,
 			Host:       r.Host,
 			Port:       r.Port,
+			Expect:     r.Expect,
+			AF:         r.AF,
+			IP:         r.IPText(),
 			TCP:        r.TCP.String(),
 			Issuer:     r.Issuer,
 			CertStatus: r.CertStatus.String(),

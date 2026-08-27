@@ -30,7 +30,12 @@ Tests never touch the external network — they mint certs in-process with
 ## Architecture
 
 Flow: `cmd/certop` parses flags → `internal/inventory` loads targets → `internal/probe`
-checks them concurrently → either `internal/report` (one-shot) or `internal/ui` (refresh).
+resolves each target and checks every address concurrently → either `internal/report`
+(one-shot) or `internal/ui` (refresh).
+
+**One inventory entry is not one row.** `Checker.expand` resolves each host and emits one
+unit per A and AAAA record, so row count varies with DNS. Rows are identified by
+`Result.Key()` (group/host/port/ip), never by index.
 
 - **`internal/probe`** is the core. `Checker.Check` dials TCP, handshakes with
   verification **off** so the leaf cert is always retrieved, then validates separately
@@ -40,7 +45,22 @@ checks them concurrently → either `internal/report` (one-shot) or `internal/ui
 - **`internal/ui`** owns a tcell screen directly. All shared state sits behind `App.mu`;
   `draw()` snapshots under the lock and only ever runs on the main loop goroutine, while
   check cycles run in their own goroutine and coalesce redraw requests through a
-  buffered channel of size 1.
+  buffered channel of size 1. `App.rows` is a map keyed by `Result.Key()`; each cycle
+  stamps the rows it touches and prunes the untouched ones **only at cycle end**, so the
+  screen never blanks mid-pass.
+
+## Severity taxonomy
+
+`probe.Result.Severity(warnDays)` is the single source of truth for how a row is judged,
+and both the header counters and the row colours go through it. Keep new consumers on it
+rather than re-deriving the rules:
+
+- `SevProblem` — unreachable, no certificate, or `CertStatus != CertOK`.
+- `SevWarning` — valid certificate expiring within `warnDays`.
+- `SevOK` — everything else.
+
+Note `report.ExitCode` does **not** use it yet: it triggers on unreachable/expiring only,
+so a long-lived self-signed or mismatched cert still exits 0.
 
 ## Non-obvious constraints
 
@@ -64,7 +84,14 @@ These were found the hard way — don't undo them:
   keep output stable across runs. Hosts keep file order within a group, and a host
   repeated on different ports is intentionally not deduplicated.
 - **Version probing is cached** (~5 handshakes vs. 1). Bypassed by `--probe-always`,
-  invalidated by the `p` key.
+  invalidated by the `p` key. The cache key is `ip:port|verify-name`, not the hostname —
+  two nodes behind one CNAME can differ, which is the whole point.
+- **Resolved addresses are sorted** (v4 before v6, then by bytes). DNS rotates its answer
+  order, and without sorting the rows would jump around on every refresh.
+- **`expect` sets SNI *and* the verification name** (`Target.VerifyName()`), modelling what
+  a client reaching the service through the CNAME actually does.
+- **`ui.layout` allocates width strictly**: fixed columns first, then host, group, IP and
+  issuer in that priority order, so the sum never exceeds the terminal width.
 
 ## Out of scope
 

@@ -140,3 +140,33 @@ func versionDigit(v uint16, s VerState) rune {
 		return '?'
 	}
 }
+
+// DefaultWarnDays es el umbral por defecto para marcar un certificado como
+// proximo a vencer.
+const DefaultWarnDays = 30
+
+// Severity clasifica una fila. La distincion importa: un nombre que no
+// coincide o un certificado vencido es un problema que hay que arreglar, y uno
+// que vence en tres semanas es solo un aviso.
+type Severity int
+
+const (
+	// SevOK: alcanzable, certificado valido y lejos de vencer.
+	SevOK Severity = iota
+	// SevWarning: certificado valido, pero vence dentro del umbral.
+	SevWarning
+	// SevProblem: inalcanzable, sin certificado, o certificado invalido
+	// (vencido, autofirmado, nombre que no coincide, cadena no confiable).
+	SevProblem
+)
+
+func (s Severity) String() string {
+	switch s {
+	case SevWarning:
+		return "por vencer"
+	case SevProblem:
+		return "problema"
+	default:
+		return "ok"
+	}
+}

@@ -5,7 +5,7 @@ PKG     := ./cmd/certop
 DISTDIR := dist
 # Version declarada del proyecto. Se le agrega la revision de git cuando el
 # arbol de trabajo no coincide con un tag limpio.
-VERSION ?= 0.9.1
+VERSION ?= 1.0
 # Solo la revision: --exclude '*' evita que un tag anotado se cuele aca y
 # termine produciendo un "0.9.1+v0.9.1" redundante.
 GITREV  := $(shell git describe --always --abbrev=7 --dirty --exclude '*' 2>/dev/null)

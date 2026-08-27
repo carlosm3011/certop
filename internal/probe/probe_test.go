@@ -11,6 +11,7 @@ import (
 	"errors"
 	"math/big"
 	"net"
+	"sync"
 	"testing"
 	"time"
 
@@ -256,8 +257,13 @@ func TestRunPreservesOrder(t *testing.T) {
 	}
 	c := New(3*time.Second, 3, false)
 
-	seen := make([]bool, len(targets))
-	got := c.Run(context.Background(), targets, func(i int, _ Result) { seen[i] = true })
+	var mu sync.Mutex
+	notified := 0
+	got := c.Run(context.Background(), targets, func(Result) {
+		mu.Lock()
+		notified++
+		mu.Unlock()
+	})
 	if len(got) != len(targets) {
 		t.Fatalf("got %d resultados, want %d", len(got), len(targets))
 	}
@@ -265,9 +271,9 @@ func TestRunPreservesOrder(t *testing.T) {
 		if got[i].Group != targets[i].Group {
 			t.Errorf("resultado %d fuera de orden: %q", i, got[i].Group)
 		}
-		if !seen[i] {
-			t.Errorf("no se notifico el resultado %d", i)
-		}
+	}
+	if notified != len(targets) {
+		t.Errorf("se notificaron %d resultados, want %d", notified, len(targets))
 	}
 }
 
@@ -298,5 +304,163 @@ func TestDaysLeft(t *testing.T) {
 		if got := daysLeft(tc.notAfter, now); got != tc.want {
 			t.Errorf("daysLeft(%v) = %d, want %d", tc.notAfter, got, tc.want)
 		}
+	}
+}
+
+// serveAny levanta un servidor TLS en todas las interfaces, de modo que
+// localhost lo alcance tanto por IPv4 como por IPv6 en el mismo puerto.
+func serveAny(t *testing.T, cn string, dnsNames []string) string {
+	t.Helper()
+	now := time.Now()
+	cert, key := mint(t, cn, dnsNames, now.Add(-time.Hour), now.Add(90*24*time.Hour), false, nil, nil)
+	ln, err := tls.Listen("tcp", ":0", &tls.Config{
+		Certificates: []tls.Certificate{{Certificate: [][]byte{cert.Raw}, PrivateKey: key}},
+		MinVersion:   tls.VersionTLS12,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer conn.Close()
+				if tc, ok := conn.(*tls.Conn); ok {
+					_ = tc.HandshakeContext(context.Background())
+				}
+			}()
+		}
+	}()
+	_, port, _ := net.SplitHostPort(ln.Addr().String())
+	return port
+}
+
+// Un nombre dual-stack produce una fila por familia: es el caso de "actualizaron
+// el config de A y se olvidaron del AAAA".
+func TestRunFanOutPerAddressFamily(t *testing.T) {
+	port := serveAny(t, "localhost", []string{"localhost"})
+	tgt := inventory.Target{Group: "g", Host: "localhost", Port: port, Addr: "localhost:" + port}
+
+	c := New(3*time.Second, 4, false)
+	got := c.Run(context.Background(), []inventory.Target{tgt}, nil)
+
+	if len(got) != 2 {
+		t.Fatalf("got %d filas, want 2 (una por familia): %+v", len(got), got)
+	}
+	// v4 antes que v6, orden estable.
+	if got[0].AF != 4 || got[1].AF != 6 {
+		t.Errorf("familias = %d, %d; want 4, 6", got[0].AF, got[1].AF)
+	}
+	if got[0].AFText() != "4" || got[1].AFText() != "6" {
+		t.Errorf("AFText = %q, %q", got[0].AFText(), got[1].AFText())
+	}
+	if !got[0].IP.Equal(net.ParseIP("127.0.0.1")) {
+		t.Errorf("IP v4 = %v", got[0].IP)
+	}
+	if !got[1].IP.Equal(net.ParseIP("::1")) {
+		t.Errorf("IP v6 = %v", got[1].IP)
+	}
+	for i, r := range got {
+		if r.TCP != TCPOK || !r.HasCert() {
+			t.Errorf("fila %d: TCP=%v err=%v", i, r.TCP, r.Err)
+		}
+	}
+	// Las dos filas son el mismo servidor: misma expiracion.
+	if got[0].DaysLeft != got[1].DaysLeft {
+		t.Errorf("expiraciones distintas: %d vs %d", got[0].DaysLeft, got[1].DaysLeft)
+	}
+	// Claves distintas: la fila ya no se identifica por el destino.
+	if got[0].Key() == got[1].Key() {
+		t.Error("las dos familias comparten Key()")
+	}
+}
+
+// El orden de las direcciones tiene que ser estable entre pasadas, aunque el
+// resolver las devuelva rotadas.
+func TestRunAddressOrderStable(t *testing.T) {
+	port := serveAny(t, "localhost", []string{"localhost"})
+	tgt := inventory.Target{Group: "g", Host: "localhost", Port: port, Addr: "localhost:" + port}
+	c := New(3*time.Second, 4, false)
+
+	var first []string
+	for pass := 0; pass < 5; pass++ {
+		var keys []string
+		for _, r := range c.Run(context.Background(), []inventory.Target{tgt}, nil) {
+			keys = append(keys, r.IPText())
+		}
+		if pass == 0 {
+			first = keys
+			continue
+		}
+		if len(keys) != len(first) {
+			t.Fatalf("pasada %d: %d filas, want %d", pass, len(keys), len(first))
+		}
+		for i := range keys {
+			if keys[i] != first[i] {
+				t.Errorf("pasada %d: orden cambio en %d: %q vs %q", pass, i, keys[i], first[i])
+			}
+		}
+	}
+}
+
+// expect fija el SNI y el nombre contra el que se valida: es el caso de los
+// nodos detras del CNAME, cuyo certificado nunca lleva su propio nombre.
+func TestExpectDrivesVerification(t *testing.T) {
+	port := serveAny(t, "esperado.test", []string{"esperado.test"})
+
+	sinExpect := inventory.Target{Group: "g", Host: "localhost", Port: port, Addr: "localhost:" + port}
+	conExpect := sinExpect
+	conExpect.Expect = "esperado.test"
+
+	c := New(3*time.Second, 4, false)
+
+	got := c.Check(context.Background(), sinExpect)
+	if got.CertStatus != CertHostnameMismatch {
+		t.Errorf("sin expect: %v, want NOMBRE-NO-COINCIDE (err=%v)", got.CertStatus, got.Err)
+	}
+
+	// Con expect el nombre valida; la cadena sigue sin ser confiable porque el
+	// certificado es autofirmado.
+	got = c.Check(context.Background(), conExpect)
+	if got.CertStatus != CertSelfSigned {
+		t.Errorf("con expect: %v, want SELF-SIGNED (err=%v)", got.CertStatus, got.Err)
+	}
+	if got.VerifyName() != "esperado.test" {
+		t.Errorf("VerifyName = %q", got.VerifyName())
+	}
+}
+
+// Una entrada cuyo nombre no resuelve tiene que dejar una fila visible.
+func TestExpandKeepsDNSFailureRow(t *testing.T) {
+	c := New(2*time.Second, 4, false)
+	tgt := inventory.Target{Group: "g", Host: "no.existe.invalid", Port: "443", Addr: "no.existe.invalid:443"}
+
+	got := c.Run(context.Background(), []inventory.Target{tgt}, nil)
+	if len(got) != 1 {
+		t.Fatalf("got %d filas, want 1", len(got))
+	}
+	if got[0].TCP != TCPDNS {
+		t.Errorf("TCP = %v, want dns", got[0].TCP)
+	}
+	if got[0].AFText() != "-" || got[0].IPText() != "-" {
+		t.Errorf("AF/IP = %q/%q, want -/-", got[0].AFText(), got[0].IPText())
+	}
+}
+
+// Un literal IP no se resuelve: una sola fila, la familia de esa direccion.
+func TestRunIPLiteral(t *testing.T) {
+	addr := serve(t, tls.VersionTLS12, tls.VersionTLS13)
+	tgt := target(t, addr)
+
+	got := New(3*time.Second, 4, false).Run(context.Background(), []inventory.Target{tgt}, nil)
+	if len(got) != 1 {
+		t.Fatalf("got %d filas, want 1", len(got))
+	}
+	if got[0].AF != 4 {
+		t.Errorf("AF = %d, want 4", got[0].AF)
 	}
 }

@@ -17,12 +17,29 @@ type Target struct {
 	Group string
 	Host  string
 	Port  string
-	// Addr es "host:puerto", la forma que consume net.Dial directamente.
+	// Addr es "host:puerto", el destino tal como se escribio.
 	Addr string
+	// Expect es el nombre que se espera que sirva el destino, para los nodos
+	// que estan detras de un CNAME y cuyo certificado nunca lleva su propio
+	// nombre. Vacio significa "el mismo host".
+	Expect string
+}
+
+// VerifyName es el nombre que se manda en SNI y contra el que se valida el
+// certificado.
+func (t Target) VerifyName() string {
+	if t.Expect != "" {
+		return t.Expect
+	}
+	return t.Host
 }
 
 type group struct {
-	Hosts []string `toml:"hosts"`
+	// Expect aplica a todas las entradas del grupo que no traigan el suyo.
+	Expect string `toml:"expect"`
+	// Hosts admite dos formas por entrada: "host:puerto", o la tabla inline
+	// { addr = "host:puerto", expect = "nombre" }.
+	Hosts []any `toml:"hosts"`
 }
 
 // Load lee y parsea el inventario en path.
@@ -53,27 +70,70 @@ func Parse(data []byte) ([]Target, error) {
 
 	var targets []Target
 	for _, name := range names {
-		for _, entry := range groups[name].Hosts {
-			host, port, err := net.SplitHostPort(entry)
+		g := groups[name]
+		for _, raw := range g.Hosts {
+			t, err := parseEntry(name, g.Expect, raw)
 			if err != nil {
-				return nil, fmt.Errorf("grupo %q: entrada %q invalida: %w", name, entry, err)
+				return nil, err
 			}
-			if host == "" {
-				return nil, fmt.Errorf("grupo %q: entrada %q sin host", name, entry)
-			}
-			if n, err := strconv.Atoi(port); err != nil || n < 1 || n > 65535 {
-				return nil, fmt.Errorf("grupo %q: entrada %q con puerto invalido %q", name, entry, port)
-			}
-			targets = append(targets, Target{
-				Group: name,
-				Host:  host,
-				Port:  port,
-				Addr:  net.JoinHostPort(host, port),
-			})
+			targets = append(targets, t)
 		}
 	}
 	if len(targets) == 0 {
 		return nil, fmt.Errorf("el inventario no contiene destinos")
 	}
 	return targets, nil
+}
+
+// parseEntry acepta tanto la forma corta (string) como la tabla inline.
+func parseEntry(groupName, groupExpect string, raw any) (Target, error) {
+	var addr, expect string
+
+	switch v := raw.(type) {
+	case string:
+		addr = v
+	case map[string]any:
+		for key, val := range v {
+			s, ok := val.(string)
+			if !ok {
+				return Target{}, fmt.Errorf("grupo %q: la clave %q debe ser texto", groupName, key)
+			}
+			switch key {
+			case "addr":
+				addr = s
+			case "expect":
+				expect = s
+			default:
+				// Un typo silencioso aca dejaria el destino mal chequeado.
+				return Target{}, fmt.Errorf("grupo %q: clave desconocida %q (validas: addr, expect)", groupName, key)
+			}
+		}
+		if addr == "" {
+			return Target{}, fmt.Errorf("grupo %q: entrada sin clave addr", groupName)
+		}
+	default:
+		return Target{}, fmt.Errorf("grupo %q: entrada invalida %v: se espera \"host:puerto\" o { addr = ..., expect = ... }", groupName, raw)
+	}
+
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return Target{}, fmt.Errorf("grupo %q: entrada %q invalida: %w", groupName, addr, err)
+	}
+	if host == "" {
+		return Target{}, fmt.Errorf("grupo %q: entrada %q sin host", groupName, addr)
+	}
+	if n, err := strconv.Atoi(port); err != nil || n < 1 || n > 65535 {
+		return Target{}, fmt.Errorf("grupo %q: entrada %q con puerto invalido %q", groupName, addr, port)
+	}
+
+	if expect == "" {
+		expect = groupExpect
+	}
+	return Target{
+		Group:  groupName,
+		Host:   host,
+		Port:   port,
+		Addr:   net.JoinHostPort(host, port),
+		Expect: expect,
+	}, nil
 }

@@ -41,6 +41,29 @@ hosts = [
 Un mismo host puede repetirse con puertos distintos. Solo se soporta TLS
 implicito (443, 465, 993, ...); no hay STARTTLS.
 
+### Nombre esperado (`expect`)
+
+Un nodo detras de un CNAME sirve el certificado del servicio, no uno con su
+propio nombre, y por eso da `NOMBRE-NO-COINCIDE`. `expect` fija el nombre que se
+manda en SNI y contra el que se valida el certificado — lo mismo que ve un
+cliente real que llega por el CNAME:
+
+```toml
+[rpki-frontends]
+expect = "rrdp.lacnic.net"
+hosts = [
+  "fe-172-233-162-16.rrdp.lacnic.net:443",
+  # una entrada puede pisar el expect del grupo:
+  { addr = "otro.lacnic.net:443", expect = "www.lacnic.net" },
+]
+```
+
+### IPv4 e IPv6
+
+Cada nombre se chequea en **todas** sus direcciones: una fila por cada registro A
+y AAAA. Asi se detecta el caso de un config actualizado en una familia y olvidado
+en la otra. La columna `AF` vale `4` o `6`.
+
 ## Uso
 
 ```
@@ -54,10 +77,10 @@ certop [--once|-1] [--refresh|-r N] [--file|-f RUTA] [--format csv|table|json]
 | `--refresh`, `-r N` | | refresca cada N segundos, estilo top/mtr |
 | `--file`, `-f` | `hosts.toml` | archivo de inventario |
 | `--format` | `csv` | formato de `--once`: `csv`, `table` o `json` |
-| `--warn-days N` | desactivado | exit code 2 si algo falla o expira en menos de N dias |
+| `--warn-days N` | `30` en pantalla | umbral de "por vencer"; con `--once` ademas da exit code 2 |
 | `--probe-always` | | resondea las versiones TLS en cada refresco |
 | `--workers N` | `32` | chequeos concurrentes |
-| `--timeout D` | `5s` | timeout por destino |
+| `--timeout D` | `5s` | timeout por destino (incluye la resolucion) |
 
 ### Ejemplos
 
@@ -73,6 +96,28 @@ certop --refresh 5                      # pantalla que se refresca cada 5s
 
 `q` salir · `r` refrescar ahora · `p` resondear versiones TLS · `s` cambiar
 orden (grupo / host / expiracion) · `espacio` pausar.
+
+### Problemas y avisos
+
+El encabezado de la pantalla separa dos categorias, porque no piden la misma
+reaccion:
+
+- **con problemas** — hay algo roto: destino inalcanzable, sin certificado, o
+  certificado invalido (`EXPIRADO`, `SELF-SIGNED`, `NOMBRE-NO-COINCIDE`,
+  `CADENA-INCOMPLETA`). Se pintan en rojo.
+- **por vencer** — el certificado esta bien, pero vence dentro del umbral
+  (30 dias por defecto, o lo que diga `--warn-days`). Se pintan en amarillo, y
+  en amarillo resaltado si faltan menos de 7 dias.
+
+```
+certop  24 filas  refresco 5s  orden grupo  ultima 15:22:03 (812ms)  24 por vencer (<30d)
+```
+
+### Columnas AF e IP
+
+`AF` es la familia de la direccion chequeada (`4` o `6`) y `IP` la direccion
+concreta. En la pantalla de refresco la IP aparece cuando el ancho de la terminal
+alcanza; en CSV y JSON estan siempre.
 
 ### Columna TLS
 
@@ -97,7 +142,14 @@ invalido igual reporte expiracion y emisor. La validacion se corre aparte:
 ### Exit codes
 
 `0` todo bien · `1` error de uso, inventario o escritura · `2` con
-`--warn-days`, algun destino inalcanzable o por vencer.
+`--warn-days`, alguna fila inalcanzable o por vencer. Con el chequeo por familia
+esto cubre tambien "IPv6 caido, IPv4 bien".
+
+## Compatibilidad
+
+En 1.0 el CSV gano las columnas `af` e `ip` despues de `puerto`, y el JSON gano
+`af`, `ip` y `expect`. Cualquier consumidor que lea las columnas por posicion hay
+que ajustarlo; por nombre no cambia nada.
 
 ## Costo de los sondeos
 

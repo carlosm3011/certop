@@ -30,10 +30,13 @@ type App struct {
 	checker  *probe.Checker
 	targets  []inventory.Target
 	interval time.Duration
+	warnDays int
 
-	mu        sync.Mutex
-	results   []probe.Result
-	filled    []bool
+	mu sync.Mutex
+	// rows se indexa por Result.Key(): un nombre se expande en una fila por
+	// direccion, y el conjunto puede cambiar entre pasadas si cambia el DNS.
+	rows      map[string]row
+	cycle     uint64
 	running   bool
 	paused    bool
 	sortMode  int
@@ -43,8 +46,17 @@ type App struct {
 	redraw chan struct{}
 }
 
+// row es una fila en pantalla. cycle registra en que pasada se la vio por
+// ultima vez, para poder descartar las que el DNS dejo de devolver; fresh
+// distingue una fila ya chequeada de un placeholder recien creado.
+type row struct {
+	result probe.Result
+	cycle  uint64
+	fresh  bool
+}
+
 // Run toma la terminal y refresca hasta que el usuario salga o se cancele ctx.
-func Run(ctx context.Context, checker *probe.Checker, targets []inventory.Target, interval time.Duration) error {
+func Run(ctx context.Context, checker *probe.Checker, targets []inventory.Target, interval time.Duration, warnDays int) error {
 	screen, err := tcell.NewScreen()
 	if err != nil {
 		return fmt.Errorf("no se pudo abrir la terminal: %w", err)
@@ -54,21 +66,24 @@ func Run(ctx context.Context, checker *probe.Checker, targets []inventory.Target
 	}
 	defer screen.Fini()
 
-	return newApp(screen, checker, targets, interval).loop(ctx)
+	return newApp(screen, checker, targets, interval, warnDays).loop(ctx)
 }
 
-func newApp(screen tcell.Screen, checker *probe.Checker, targets []inventory.Target, interval time.Duration) *App {
+func newApp(screen tcell.Screen, checker *probe.Checker, targets []inventory.Target, interval time.Duration, warnDays int) *App {
 	a := &App{
 		screen:   screen,
 		checker:  checker,
 		targets:  targets,
 		interval: interval,
-		results:  make([]probe.Result, len(targets)),
-		filled:   make([]bool, len(targets)),
+		warnDays: warnDays,
+		rows:     make(map[string]row, len(targets)),
 		redraw:   make(chan struct{}, 1),
 	}
-	for i, t := range targets {
-		a.results[i] = probe.Result{Target: t}
+	// Placeholders para que la pantalla muestre el inventario completo antes
+	// de que termine la primera pasada.
+	for _, t := range targets {
+		r := probe.Result{Target: t}
+		a.rows[r.Key()] = row{result: r}
 	}
 	return a
 }
@@ -178,14 +193,38 @@ func (a *App) startCycle(ctx context.Context) {
 
 	go func() {
 		started := time.Now()
-		a.checker.Run(ctx, a.targets, func(i int, r probe.Result) {
+
+		a.mu.Lock()
+		a.cycle++
+		cycle := a.cycle
+		a.mu.Unlock()
+
+		a.checker.Run(ctx, a.targets, func(r probe.Result) {
+			key := r.Key()
 			a.mu.Lock()
-			a.results[i] = r
-			a.filled[i] = true
+			// El placeholder del destino se retira apenas llega su primera
+			// direccion; si no, la lista creceria hasta placeholders+filas
+			// antes de podarse al cerrar el ciclo. Cuando la resolucion falla
+			// la fila ES la del placeholder, y hay que conservarla.
+			if ph := (probe.Result{Target: r.Target}).Key(); ph != key {
+				if old, ok := a.rows[ph]; ok && !old.fresh {
+					delete(a.rows, ph)
+				}
+			}
+			a.rows[key] = row{result: r, cycle: cycle, fresh: true}
 			a.mu.Unlock()
 			a.requestDraw()
 		})
+
 		a.mu.Lock()
+		// Las filas que esta pasada no toco ya no existen (el DNS dejo de
+		// devolver esa direccion). Se descartan recien al final del ciclo,
+		// para no vaciar la pantalla mientras la pasada corre.
+		for key, r := range a.rows {
+			if r.cycle != cycle {
+				delete(a.rows, key)
+			}
+		}
 		a.running = false
 		a.lastCycle = time.Now()
 		a.lastDur = time.Since(started)
@@ -203,33 +242,53 @@ func (a *App) requestDraw() {
 }
 
 type columns struct {
-	group, host, port, tcp, expiry, tlsCol, status, issuer int
+	group, host, af, ip, port, tcp, expiry, tlsCol, status, issuer int
 }
 
+// layout reparte el ancho disponible. Las columnas de ancho fijo se sirven
+// primero; el resto se reparte por prioridad entre host, grupo, IP y emisor,
+// de modo que la suma nunca exceda el ancho de la terminal. En una pantalla
+// angosta cae primero el emisor, despues la IP, y recien ahi se recortan los
+// nombres.
 func (a *App) layout(width int, results []probe.Result) columns {
-	c := columns{port: 6, tcp: 9, expiry: 7, tlsCol: 4, status: 18}
+	c := columns{af: 2, port: 6, tcp: 9, expiry: 7, tlsCol: 4, status: 18}
 	c.group, c.host = 5, 10
+	ipWidth := 0
 	for _, r := range results {
 		c.group = max(c.group, len(r.Group))
 		c.host = max(c.host, len(r.Host))
+		ipWidth = max(ipWidth, len(r.IPText()))
 	}
 	c.group = min(c.group, 20)
 	c.host = min(c.host, 40)
 
-	used := c.group + c.host + c.port + c.tcp + c.expiry + c.tlsCol + c.status + 7
-	c.issuer = max(width-used, 0)
+	const gaps = 9 // un espacio entre columnas
+	rigid := c.af + c.port + c.tcp + c.expiry + c.tlsCol + c.status + gaps
+	avail := max(width-rigid, 0)
+
+	// El host es la identidad de la fila, asi que se sirve primero.
+	c.host = min(c.host, avail)
+	avail -= c.host
+	c.group = min(c.group, avail)
+	avail -= c.group
+	c.ip = min(ipWidth, avail)
+	avail -= c.ip
+	c.issuer = avail
 	return c
 }
 
 func (a *App) draw() {
 	a.mu.Lock()
-	results := make([]probe.Result, len(a.results))
-	copy(results, a.results)
-	filled := make([]bool, len(a.filled))
-	copy(filled, a.filled)
+	rows := make([]row, 0, len(a.rows))
+	for _, r := range a.rows {
+		rows = append(rows, r)
+	}
 	running, paused, sortMode := a.running, a.paused, a.sortMode
 	lastCycle, lastDur := a.lastCycle, a.lastDur
 	a.mu.Unlock()
+
+	// El mapa no tiene orden: siempre se reordena antes de dibujar.
+	sortRows(rows, sortMode)
 
 	a.screen.Clear()
 	width, height := a.screen.Size()
@@ -237,12 +296,15 @@ func (a *App) draw() {
 		a.screen.Show()
 		return
 	}
+	results := make([]probe.Result, len(rows))
+	for i, r := range rows {
+		results[i] = r.result
+	}
 	cols := a.layout(width, results)
-	order := sortOrder(results, sortMode)
 
 	// Encabezado.
-	head := fmt.Sprintf("certop  %d destinos  refresco %s  orden %s",
-		len(results), a.interval, sortNames[sortMode])
+	head := fmt.Sprintf("certop  %d filas  refresco %s  orden %s",
+		len(rows), a.interval, sortNames[sortMode])
 	switch {
 	case running:
 		head += "  [chequeando]"
@@ -252,8 +314,12 @@ func (a *App) draw() {
 	if paused {
 		head += "  [PAUSA]"
 	}
-	if n := countWarn(results, filled); n > 0 {
-		head += fmt.Sprintf("  %d con problemas", n)
+	problems, warnings := counts(rows, a.warnDays)
+	if problems > 0 {
+		head += fmt.Sprintf("  %d con problemas", problems)
+	}
+	if warnings > 0 {
+		head += fmt.Sprintf("  %d por vencer (<%dd)", warnings, a.warnDays)
 	}
 	a.text(0, 0, width, tcell.StyleDefault.Bold(true), head)
 
@@ -263,26 +329,27 @@ func (a *App) draw() {
 		a.screen.SetContent(x, 1, ' ', nil, headerStyle)
 	}
 	a.row(1, cols, headerStyle, headerStyle,
-		"GRUPO", "HOST", "PUERTO", "TCP", "EXPIRA", "TLS", "ESTADO", "EMISOR")
+		"GRUPO", "HOST", "AF", "IP", "PUERTO", "TCP", "EXPIRA", "TLS", "ESTADO", "EMISOR")
 
 	// Filas.
 	visible := height - 3
-	for i, idx := range order {
+	for i, r := range rows {
 		if i >= visible {
 			break
 		}
-		r := results[idx]
 		base := tcell.StyleDefault
-		if !filled[idx] {
+		if !r.fresh {
 			base = base.Dim(true)
 		}
-		a.row(i+2, cols, base, rowStyle(r, filled[idx]),
-			r.Group, r.Host, r.Port, r.TCP.String(), r.ExpiryText(),
-			r.TLSDigits(), r.CertStatus.String(), issuerText(r, filled[idx]))
+		a.row(i+2, cols, base, rowStyle(r.result, r.fresh, a.warnDays),
+			r.result.Group, r.result.Host, r.result.AFText(), r.result.IPText(),
+			r.result.Port, r.result.TCP.String(), r.result.ExpiryText(),
+			r.result.TLSDigits(), r.result.CertStatus.String(),
+			issuerText(r.result, r.fresh))
 	}
-	if len(order) > visible {
+	if len(rows) > visible {
 		a.text(0, height-2, width, tcell.StyleDefault.Dim(true),
-			fmt.Sprintf("... %d destinos mas (agrandar la terminal)", len(order)-visible))
+			fmt.Sprintf("... %d filas mas (agrandar la terminal)", len(rows)-visible))
 	}
 
 	// Pie.
@@ -295,10 +362,14 @@ func (a *App) draw() {
 
 // row dibuja una fila completa. base pinta las columnas neutras y accent las
 // que reflejan el estado del destino.
-func (a *App) row(y int, c columns, base, accent tcell.Style, group, host, port, tcp, expiry, tlsCol, status, issuer string) {
+func (a *App) row(y int, c columns, base, accent tcell.Style, group, host, af, ip, port, tcp, expiry, tlsCol, status, issuer string) {
 	x := 0
 	x += a.text(x, y, c.group, base, group) + 1
 	x += a.text(x, y, c.host, base, host) + 1
+	x += a.text(x, y, c.af, base, af) + 1
+	if c.ip > 0 {
+		x += a.text(x, y, c.ip, base, ip) + 1
+	}
 	x += a.text(x, y, c.port, base, port) + 1
 	x += a.text(x, y, c.tcp, accent, tcp) + 1
 	x += a.text(x, y, c.expiry, accent, expiry) + 1
@@ -326,20 +397,21 @@ func (a *App) text(x, y, maxw int, style tcell.Style, s string) int {
 	return maxw
 }
 
-// rowStyle elige el color segun la urgencia del destino.
-func rowStyle(r probe.Result, filled bool) tcell.Style {
+// rowStyle colorea la fila segun su severidad: rojo para los problemas,
+// amarillo para lo que esta por vencer, verde para el resto.
+func rowStyle(r probe.Result, fresh bool, warnDays int) tcell.Style {
 	s := tcell.StyleDefault
-	if !filled {
+	if !fresh {
 		return s.Dim(true)
 	}
-	switch {
-	case !r.TCP.OK(), r.CertStatus == probe.CertExpired:
+	switch r.Severity(warnDays) {
+	case probe.SevProblem:
 		return s.Foreground(tcell.ColorRed).Bold(true)
-	case !r.HasCert():
-		return s.Foreground(tcell.ColorRed)
-	case r.DaysLeft < 7:
-		return s.Foreground(tcell.ColorRed).Bold(true)
-	case r.DaysLeft < 30, !r.CertStatus.OK():
+	case probe.SevWarning:
+		// Menos de una semana ya es casi un problema.
+		if r.DaysLeft < 7 {
+			return s.Foreground(tcell.ColorYellow).Bold(true)
+		}
 		return s.Foreground(tcell.ColorYellow)
 	default:
 		return s.Foreground(tcell.ColorGreen)
@@ -359,33 +431,33 @@ func issuerText(r probe.Result, filled bool) string {
 	return r.Issuer
 }
 
-func countWarn(results []probe.Result, filled []bool) int {
-	n := 0
-	for i, r := range results {
-		if !filled[i] {
+// counts separa las filas ya chequeadas en problemas y avisos por vencimiento.
+func counts(rows []row, warnDays int) (problems, warnings int) {
+	for _, r := range rows {
+		if !r.fresh {
 			continue
 		}
-		if !r.TCP.OK() || !r.HasCert() || !r.CertStatus.OK() || r.DaysLeft < 30 {
-			n++
+		switch r.result.Severity(warnDays) {
+		case probe.SevProblem:
+			problems++
+		case probe.SevWarning:
+			warnings++
 		}
 	}
-	return n
+	return problems, warnings
 }
 
-// sortOrder devuelve los indices en el orden de visualizacion pedido.
-func sortOrder(results []probe.Result, mode int) []int {
-	order := make([]int, len(results))
-	for i := range order {
-		order[i] = i
-	}
-	sort.SliceStable(order, func(x, y int) bool {
-		a, b := results[order[x]], results[order[y]]
+// sortRows ordena las filas en el lugar. AF e IP entran como desempate en los
+// tres modos para que las filas de un mismo host queden juntas y en el mismo
+// orden entre pasadas.
+func sortRows(rows []row, mode int) {
+	sort.SliceStable(rows, func(x, y int) bool {
+		a, b := rows[x].result, rows[y].result
 		switch mode {
 		case sortByHost:
 			if a.Host != b.Host {
 				return a.Host < b.Host
 			}
-			return a.Port < b.Port
 		case sortByExpiry:
 			// Lo inalcanzable primero: es lo que hay que mirar ya.
 			if a.HasCert() != b.HasCert() {
@@ -394,7 +466,9 @@ func sortOrder(results []probe.Result, mode int) []int {
 			if a.DaysLeft != b.DaysLeft {
 				return a.DaysLeft < b.DaysLeft
 			}
-			return a.Host < b.Host
+			if a.Host != b.Host {
+				return a.Host < b.Host
+			}
 		default:
 			if a.Group != b.Group {
 				return a.Group < b.Group
@@ -402,8 +476,13 @@ func sortOrder(results []probe.Result, mode int) []int {
 			if a.Host != b.Host {
 				return a.Host < b.Host
 			}
+		}
+		if a.Port != b.Port {
 			return a.Port < b.Port
 		}
+		if a.AF != b.AF {
+			return a.AF < b.AF
+		}
+		return a.IPText() < b.IPText()
 	})
-	return order
 }

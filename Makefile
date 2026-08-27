@@ -3,6 +3,8 @@
 BINARY  := certop
 PKG     := ./cmd/certop
 DISTDIR := dist
+# Los binarios de las releases se versionan aca; dist/ queda ignorado.
+RELEASEDIR := release
 # Version declarada del proyecto. Se puede pisar desde el entorno, con o sin la
 # v inicial: `VERSION=v1.1 make release`.
 VERSION ?= 1.0
@@ -66,15 +68,15 @@ vet:
 .PHONY: check
 check: vet test
 
-## release: compila, sube los binarios y pushea el tag (VERSION=v1.1 make release)
+## release: compila, commitea los binarios y pushea el tag (VERSION=v1.1 make release)
 .PHONY: release
 release:
-	@VERSION=$(RELVERSION) DISTDIR=$(DISTDIR) scripts/release.sh
+	@VERSION=$(RELVERSION) DISTDIR=$(DISTDIR) RELEASEDIR=$(RELEASEDIR) scripts/release.sh
 
-## release-dry: muestra que haria release, sin subir ni pushear nada
+## release-dry: muestra que haria release, sin commitear ni pushear nada
 .PHONY: release-dry
 release-dry:
-	@DRY_RUN=1 VERSION=$(RELVERSION) DISTDIR=$(DISTDIR) scripts/release.sh
+	@DRY_RUN=1 VERSION=$(RELVERSION) DISTDIR=$(DISTDIR) RELEASEDIR=$(RELEASEDIR) scripts/release.sh
 
 ## clean: borra dist/ y el binario local
 .PHONY: clean
@@ -95,3 +97,4 @@ help:
 	@echo "Variables:"
 	@echo "  VERSION   version del proyecto, con o sin v (default: $(VERSION); se embebe $(FULLVERSION))"
 	@echo "  DISTDIR   directorio de salida de dist (default: $(DISTDIR))"
+	@echo "  RELEASEDIR  binarios versionados de las releases (default: $(RELEASEDIR))"

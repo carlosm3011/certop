@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 #
 # Crea el objeto Release en GitLab. Corre en el pipeline, disparado por el push
-# de un tag; los binarios ya fueron subidos al package registry por
-# `make release` desde la maquina del operador, porque no hay runner con Go.
+# de un tag hecho con `make release`.
+#
+# Los binarios estan commiteados en release/, asi que la release enlaza a los
+# archivos crudos del repo en ese tag. No hace falta ningun token: alcanza con
+# el CI_JOB_TOKEN que GitLab inyecta solo.
 #
 # Pensado para un shell runner: solo necesita git y curl. Si hay jq disponible
 # se usa para armar el JSON y aprovechar el mensaje del tag como descripcion.
@@ -14,32 +17,22 @@ die() { printf 'gitlab-release: %s\n' "$*" >&2; exit 1; }
 : "${CI_COMMIT_TAG:?este job solo corre sobre un tag}"
 : "${CI_API_V4_URL:?}"
 : "${CI_PROJECT_ID:?}"
+: "${CI_PROJECT_URL:?}"
 : "${CI_JOB_TOKEN:?}"
 
-PACKAGE="${PACKAGE:-certop}"
+RELEASEDIR="${RELEASEDIR:-release}"
 RELVERSION="${CI_COMMIT_TAG#v}"
-
-# Mismo criterio que scripts/release.sh: el paquete usa tres componentes.
-dots=$(printf '%s' "$RELVERSION" | tr -cd '.' | wc -c | tr -d ' ')
-case "$dots" in
-0) PKGVERSION="${RELVERSION}.0.0" ;;
-1) PKGVERSION="${RELVERSION}.0" ;;
-*) PKGVERSION="$RELVERSION" ;;
-esac
-
-base="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/${PACKAGE}/${PKGVERSION}"
 assets="certop-linux-amd64 certop-darwin-arm64 SHA256SUMS"
 
-# Un tag pusheado a mano no tiene binarios arriba: mejor fallar aca que crear
-# una release con links rotos.
-for file in $([ "${DRY_RUN:-0}" = 1 ] || echo $assets); do
-	code=$(curl --silent --output /dev/null --write-out '%{http_code}' \
-		--header "JOB-TOKEN: ${CI_JOB_TOKEN}" "${base}/${file}")
-	case "$code" in
-	200 | 302) ;;
-	*) die "falta ${file} en el package registry (HTTP ${code}). ¿Se libero con 'make release'?" ;;
-	esac
+# Un tag pusheado a mano no trae los binarios: mejor fallar aca que crear una
+# release con links rotos. Como estan en el repo, alcanza con mirar el checkout.
+for file in $assets; do
+	[ -f "${RELEASEDIR}/${file}" ] ||
+		die "falta ${RELEASEDIR}/${file} en el tag ${CI_COMMIT_TAG}. ¿Se libero con 'make release'?"
 done
+
+# Los binarios se sirven crudos desde el repo, fijados al tag.
+base="${CI_PROJECT_URL}/-/raw/${CI_COMMIT_TAG}/${RELEASEDIR}"
 
 # Descripcion: el mensaje del tag si se puede, y si no una generada.
 message="${CI_COMMIT_TAG_MESSAGE:-}"
@@ -70,9 +63,9 @@ if command -v jq >/dev/null 2>&1; then
 			}
 		}' >"$payload"
 else
-	# Sin jq: se escapa a mano y se usa una descripcion controlada, para no
-	# meter el mensaje del tag sin poder escaparlo bien.
-	desc="certop ${RELVERSION}. Binarios en el package registry del proyecto."
+	# Sin jq se usa una descripcion controlada: escapar el mensaje del tag a
+	# mano en JSON es pedir problemas.
+	desc="certop ${RELVERSION}. Binarios commiteados en ${RELEASEDIR}/."
 	cat >"$payload" <<JSON
 {
   "name": "certop ${RELVERSION}",

@@ -216,27 +216,30 @@ tabla inline son opcionales.
 
 ## Releases
 
-No hay runner con Go, asi que los binarios se compilan **localmente** y se suben
-al package registry del proyecto; el pipeline de GitLab solo crea el objeto
-Release apuntando a lo que ya esta subido.
+No hay runner con Go, asi que los binarios se compilan **localmente** y se
+commitean en `release/`; el pipeline solo crea el objeto Release apuntando a los
+archivos del repo. **No hace falta ningun token**: todo viaja por ssh con la
+misma llave que usas para pushear, y el job de CI usa el `CI_JOB_TOKEN` que
+GitLab inyecta solo.
 
 ```sh
-export GITLAB_TOKEN=...          # token personal con scope api
 VERSION=v1.1 make release
 ```
 
 `make release` hace, en este orden:
 
-1. controles: arbol limpio, rama `main`, el commit ya pusheado, y que el tag no
-   exista ni local ni en el remoto;
+1. controles: arbol limpio, rama `main`, en sincronia con el remoto, y que el
+   tag no exista ni local ni en el remoto;
 2. `make dist` y `SHA256SUMS`;
-3. sube los tres archivos al package registry;
-4. crea el tag anotado y lo pushea — eso dispara el pipeline.
+3. copia los tres archivos a `release/` y fija `VERSION` en el Makefile, para
+   que un `make build` posterior no siga diciendo la version vieja;
+4. commitea, pushea `main`, y recien ahi crea y pushea el tag — eso dispara el
+   pipeline.
 
-El orden importa: el pipeline crea la release apuntando a los binarios, asi que
-tienen que estar arriba antes de que el tag exista. Si alguien pushea un tag a
-mano, el job falla con un mensaje claro en vez de crear una release con links
-rotos.
+El orden importa: la release enlaza a los archivos del repo en ese tag, asi que
+el commit tiene que estar en el remoto antes que el tag. Si alguien pushea un
+tag a mano, el job falla con un mensaje claro en vez de crear una release con
+links rotos.
 
 Para ver que haria sin tocar nada:
 
@@ -245,12 +248,15 @@ VERSION=v1.1 make release-dry
 ```
 
 `VERSION` acepta `1.1` o `v1.1`; el tag siempre queda como `v1.1`. Sin `VERSION`
-en el entorno rige el default del Makefile. El package registry exige versiones
-de tres componentes, asi que `1.1` se sube como `1.1.0` — el tag y el binario
-siguen diciendo `1.1`.
+en el entorno rige el default del Makefile, que apunta a la ultima release.
 
-El host y el proyecto salen del remoto `origin`; si el remoto no es una URL de
-GitLab se pueden fijar con `GITLAB_HOST` y `GITLAB_PROJECT`.
+Los binarios quedan versionados en el repo, unos 1.7 MiB por release ya
+comprimidos por git. `dist/` sigue ignorado, para que compilar durante el
+desarrollo no ensucie el arbol.
+
+Un detalle: el `+sha` que reporta `--version` es el commit **desde el que se
+compilo**, no el commit que contiene el binario — no se puede embeber el hash de
+un commit que todavia no existe.
 
 ## Costo de los sondeos
 

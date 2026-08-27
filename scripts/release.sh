@@ -2,12 +2,13 @@
 #
 # Publica una release de certop.
 #
-# No hay runner con Go, asi que los binarios se compilan y se suben desde aca;
-# el pipeline de GitLab solo crea el objeto Release apuntando a lo ya subido.
-# Por eso el orden importa: primero se sube, despues se pushea el tag.
+# No hay runner con Go, asi que los binarios se compilan aca y se commitean en
+# release/. El pipeline de GitLab solo crea el objeto Release apuntando a los
+# archivos del repo, y no hace falta ningun token: todo viaja por ssh con la
+# llave que ya usas para pushear.
 #
 #   VERSION=v1.1 make release
-#   DRY_RUN=1 VERSION=v1.1 make release   # muestra que haria, sin tocar nada
+#   VERSION=v1.1 make release-dry   # muestra que haria, sin tocar nada
 #
 set -euo pipefail
 
@@ -24,47 +25,13 @@ run() {
 VERSION="${VERSION:?falta VERSION}"
 DRY_RUN="${DRY_RUN:-0}"
 DISTDIR="${DISTDIR:-dist}"
-PACKAGE="${PACKAGE:-certop}"
+RELEASEDIR="${RELEASEDIR:-release}"
 
 # "1.1" y "v1.1" son lo mismo; el tag siempre lleva la v.
 RELVERSION="${VERSION#v}"
 TAG="v${RELVERSION}"
 
-# El registry de paquetes generico exige una version de tres componentes, asi
-# que 1.1 se sube como 1.1.0. El tag y el binario siguen diciendo 1.1.
-pkgversion() {
-	local v="$1" dots
-	dots=$(printf '%s' "$v" | tr -cd '.' | wc -c | tr -d ' ')
-	case "$dots" in
-	0) printf '%s.0.0' "$v" ;;
-	1) printf '%s.0' "$v" ;;
-	*) printf '%s' "$v" ;;
-	esac
-}
-PKGVERSION=$(pkgversion "$RELVERSION")
-
-# Host y proyecto salen del remoto, para no hardcodear la instancia; se pueden
-# fijar a mano si el remoto no tiene la forma esperada.
-remote=$(git remote get-url origin)
-host="${GITLAB_HOST:-$(printf '%s' "$remote" | sed -E 's#^git@([^:]+):.*#\1#; s#^https?://([^/]+)/.*#\1#')}"
-path="${GITLAB_PROJECT:-$(printf '%s' "$remote" | sed -E 's#^git@[^:]+:##; s#^https?://[^/]+/##; s#\.git$##')}"
-
-# Si el remoto no es una URL de GitLab, mejor frenar que armar una URL absurda.
-case "$host" in
-"" | */* | *\ *)
-	die "no pude deducir el host de GitLab de '${remote}'; fija GITLAB_HOST y GITLAB_PROJECT"
-	;;
-esac
-case "$path" in
-*/*) ;;
-*) die "no pude deducir el proyecto de '${remote}'; fija GITLAB_PROJECT (grupo/proyecto)" ;;
-esac
-
-api="https://${host}/api/v4"
-project=$(printf '%s' "$path" | sed 's#/#%2F#g')
-
-say "certop ${RELVERSION}  ->  tag ${TAG}, paquete ${PACKAGE}/${PKGVERSION}"
-printf '    proyecto: %s en %s\n' "$path" "$host"
+say "certop ${RELVERSION}  ->  tag ${TAG}, binarios en ${RELEASEDIR}/"
 
 # ---- controles previos -------------------------------------------------------
 # Todos antes de tocar nada: una release a medias es peor que una que no salio.
@@ -80,23 +47,18 @@ if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
 	die "el tag ${TAG} ya existe localmente"
 fi
 
-say "verificando que el commit este en el remoto"
+say "sincronizando con el remoto"
 git fetch -q origin main
 [ "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" ] ||
-	die "HEAD no coincide con origin/main; pushea el commit antes de liberarlo"
+	die "HEAD no coincide con origin/main; pushea o traete los cambios primero"
 
 if git ls-remote --tags --exit-code origin "refs/tags/${TAG}" >/dev/null 2>&1; then
 	die "el tag ${TAG} ya existe en el remoto"
 fi
 
-if [ "$DRY_RUN" != 1 ]; then
-	[ -n "${GITLAB_TOKEN:-}" ] ||
-		die "falta GITLAB_TOKEN (token con scope api) para subir los binarios"
-fi
-
 # ---- compilar y firmar -------------------------------------------------------
 
-say "compilando ${DISTDIR}/"
+say "compilando"
 make dist VERSION="$RELVERSION"
 
 say "generando SHA256SUMS"
@@ -108,36 +70,53 @@ fi
 (cd "$DISTDIR" && sum certop-* >SHA256SUMS)
 sed 's/^/    /' "${DISTDIR}/SHA256SUMS"
 
-# ---- subir al package registry ----------------------------------------------
+# ---- publicar en el repo -----------------------------------------------------
+# Los binarios versionados van en release/; dist/ sigue ignorado, para que
+# compilar durante el desarrollo no ensucie el arbol.
 
-assets=$(cd "$DISTDIR" && ls certop-* SHA256SUMS)
-for file in $assets; do
-	url="${api}/projects/${project}/packages/generic/${PACKAGE}/${PKGVERSION}/${file}"
-	say "subiendo ${file}"
-	if [ "$DRY_RUN" = 1 ]; then
-		printf '   [dry-run] PUT %s\n' "$url"
-	else
-		curl --fail-with-body --silent --show-error \
-			--header "PRIVATE-TOKEN: ${GITLAB_TOKEN}" \
-			--upload-file "${DISTDIR}/${file}" "$url" >/dev/null
-	fi
+say "copiando a ${RELEASEDIR}/"
+run mkdir -p "$RELEASEDIR"
+for file in $(cd "$DISTDIR" && ls certop-* SHA256SUMS); do
+	run cp "${DISTDIR}/${file}" "${RELEASEDIR}/${file}"
 done
 
-# ---- taggear y pushear -------------------------------------------------------
-# El push del tag dispara el pipeline que crea la Release. Va ultimo, con los
-# binarios ya arriba.
+# Que el default del Makefile siga a la ultima release, para que un `make build`
+# posterior no vuelva a decir la version vieja.
+say "fijando VERSION=${RELVERSION} en el Makefile"
+if [ "$DRY_RUN" = 1 ]; then
+	printf '   [dry-run] sed VERSION ?= %s\n' "$RELVERSION"
+else
+	tmp=$(mktemp)
+	sed "s/^VERSION ?= .*/VERSION ?= ${RELVERSION}/" Makefile >"$tmp"
+	grep -q "^VERSION ?= ${RELVERSION}\$" "$tmp" ||
+		die "no pude fijar VERSION en el Makefile"
+	mv "$tmp" Makefile
+fi
 
 notes="${NOTES:-certop ${RELVERSION}}"
-say "creando tag ${TAG}"
-run git tag -a "$TAG" -m "$notes"
 
-say "pusheando ${TAG} (dispara el pipeline de release)"
+say "commiteando"
+run git add "$RELEASEDIR" Makefile
+if [ "$DRY_RUN" != 1 ] && git diff --cached --quiet; then
+	die "no hay nada que commitear: ¿ya estaba liberada esta version?"
+fi
+run git commit -m "certop ${RELVERSION}: binarios de la release"
+
+# El commit tiene que estar en el remoto antes que el tag: la release enlaza a
+# los archivos del repo en ese tag.
+say "pusheando main"
+run git push origin main
+
+say "creando y pusheando ${TAG} (dispara el pipeline de release)"
+run git tag -a "$TAG" -m "$notes"
 run git push origin "$TAG"
 
 say "listo"
 if [ "$DRY_RUN" = 1 ]; then
-	printf '    (dry-run: no se subio ni se pusheo nada)\n'
+	printf '    (dry-run: no se modifico, commiteo ni pusheo nada)\n'
 else
-	printf '    seguimiento: https://%s/%s/-/pipelines\n' "$host" "$path"
-	printf '    release:     https://%s/%s/-/releases/%s\n' "$host" "$path" "$TAG"
+	remote=$(git remote get-url origin)
+	web=$(printf '%s' "$remote" | sed -E 's#^git@([^:]+):#https://\1/#; s#\.git$##')
+	printf '    pipeline: %s/-/pipelines\n' "$web"
+	printf '    release:  %s/-/releases/%s\n' "$web" "$TAG"
 fi

@@ -26,8 +26,8 @@ hosts = [
 [email]
 hosts = [
   "mail.lacnic.net:993",
-  # Override puntual del expect del grupo (aca no hay grupo, es solo ejemplo):
-  # { addr = "otro.lacnic.net:443", expect = "www.lacnic.net" },
   "mail.lacnic.net.uy:993",
   "mail.lacnic.net.uy:465",
+  # Una entrada puede traer su propio expect y pisar el del grupo:
+  # { addr = "webmail.lacnic.net:443", expect = "mail.lacnic.net" },
 ]

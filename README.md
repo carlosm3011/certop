@@ -2,10 +2,11 @@
 
 Visualizar estado de certificados en una flota de servidores.
 
-CERTOP chequea, para cada destino de un inventario, el estado del socket TCP, la
-expiracion y el emisor del certificado, su validez, y que versiones de TLS
-acepta el servidor. Corre en una pasada unica (reporte para cron o monitoreo) o
-en una pantalla que se refresca estilo `top`/`mtr`.
+CERTOP toma un inventario de destinos y, para **cada direccion IP** de cada uno,
+reporta el estado del socket TCP, la expiracion y el emisor del certificado, su
+validez, y que versiones de TLS acepta el servidor. Corre en una pasada unica
+(reporte para cron o monitoreo) o en una pantalla que se refresca estilo
+`top`/`mtr`.
 
 ## Compilar
 
@@ -21,48 +22,63 @@ Requiere Go 1.27 o superior. Los binarios salen estaticos (`CGO_ENABLED=0`).
 ## Inventario
 
 Un archivo TOML al estilo del inventario de Ansible: cada tabla es un grupo y su
-clave `hosts` lista los destinos en formato `host:puerto`. Ver
+clave `hosts` lista los destinos. Por defecto se lee `./hosts.toml`; ver
 [`hosts.toml.example`](hosts.toml.example).
 
 ```toml
-[frontends]
+[rpki-frontends]
+# Los nodos estan detras de un CNAME: el certificado sirve la identidad del
+# servicio, no la del nodo.
+expect = "rrdp.lacnic.net"
 hosts = [
-  "rpki-fe-1.lacnic.net:443",
-  "rpki-fe-2.lacnic.net:443",
+  "fe-1.rrdp.lacnic.net:443",
+  "fe-2.rrdp.lacnic.net:443",
 ]
 
 [email]
 hosts = [
   "mail.lacnic.net.uy:993",
   "mail.lacnic.net.uy:465",
+  # una entrada puede traer su propio expect y pisar el del grupo:
+  { addr = "webmail.lacnic.net:443", expect = "mail.lacnic.net" },
 ]
 ```
 
-Un mismo host puede repetirse con puertos distintos. Solo se soporta TLS
-implicito (443, 465, 993, ...); no hay STARTTLS.
+Una entrada puede escribirse de dos formas:
+
+| Forma | Cuando |
+|---|---|
+| `"host:puerto"` | el caso normal |
+| `{ addr = "host:puerto", expect = "nombre" }` | cuando ese destino necesita un `expect` propio |
+
+Un mismo host puede repetirse con puertos distintos, como `mail.lacnic.net.uy`
+arriba: son dos destinos independientes. Solo se soporta TLS implicito (443,
+465, 993, ...); no hay STARTTLS.
 
 ### Nombre esperado (`expect`)
 
-Un nodo detras de un CNAME sirve el certificado del servicio, no uno con su
-propio nombre, y por eso da `NOMBRE-NO-COINCIDE`. `expect` fija el nombre que se
-manda en SNI y contra el que se valida el certificado — lo mismo que ve un
-cliente real que llega por el CNAME:
+Un nodo detras de un CNAME sirve el certificado del servicio y no uno con su
+propio nombre: `fe-1.rrdp.lacnic.net` presenta un `*.lacnic.net`, que cubre
+`rrdp.lacnic.net` pero no un nombre de segundo nivel. Sin ayuda, CERTOP lo
+reporta como `NOMBRE-NO-COINCIDE`, que es ruido: el nodo esta bien configurado.
 
-```toml
-[rpki-frontends]
-expect = "rrdp.lacnic.net"
-hosts = [
-  "fe-172-233-162-16.rrdp.lacnic.net:443",
-  # una entrada puede pisar el expect del grupo:
-  { addr = "otro.lacnic.net:443", expect = "www.lacnic.net" },
-]
-```
+`expect` fija el nombre que se manda en **SNI** y contra el que se **valida** el
+certificado — exactamente lo que hace un cliente real que llega por el CNAME.
+Se declara a nivel de grupo, y una entrada puede pisarlo.
 
 ### IPv4 e IPv6
 
-Cada nombre se chequea en **todas** sus direcciones: una fila por cada registro A
-y AAAA. Asi se detecta el caso de un config actualizado en una familia y olvidado
-en la otra. La columna `AF` vale `4` o `6`.
+Cada nombre se chequea en **todas** sus direcciones: una fila por cada registro
+A y AAAA. Un config actualizado en una familia y olvidado en la otra solo se ve
+chequeando cada direccion por separado.
+
+Consecuencias practicas:
+
+- La cantidad de filas no es la cantidad de entradas del inventario, y puede
+  cambiar entre pasadas si cambia el DNS.
+- Un literal IP en el inventario no se resuelve: es una sola fila.
+- Si el nombre no resuelve queda una fila con `tcp = dns`, en vez de
+  desaparecer.
 
 ## Uso
 
@@ -85,39 +101,43 @@ certop [--once|-1] [--refresh|-r N] [--file|-f RUTA] [--format csv|table|json]
 ### Ejemplos
 
 ```sh
-certop --once --format table            # tabla legible
-certop --once > estado.csv              # CSV para procesar
+certop --once --format table              # tabla legible
+certop --once > estado.csv                # CSV para procesar
 certop --once --format json | jq '.[] | select(.dias_restantes < 30)'
-certop --once --warn-days 30 >/dev/null # chequeo para cron; exit 2 si hay algo por vencer
-certop --refresh 5                      # pantalla que se refresca cada 5s
+certop --once --warn-days 30 >/dev/null   # chequeo para cron; exit 2 si hay algo por vencer
+certop --refresh 5                        # pantalla que se refresca cada 5s
+certop --refresh 5 --warn-days 7          # en pantalla, avisar solo con menos de 7 dias
 ```
 
-### Teclas en modo refresco
-
-`q` salir · `r` refrescar ahora · `p` resondear versiones TLS · `s` cambiar
-orden (grupo / host / expiracion) · `espacio` pausar.
-
-### Problemas y avisos
-
-El encabezado de la pantalla separa dos categorias, porque no piden la misma
-reaccion:
-
-- **con problemas** — hay algo roto: destino inalcanzable, sin certificado, o
-  certificado invalido (`EXPIRADO`, `SELF-SIGNED`, `NOMBRE-NO-COINCIDE`,
-  `CADENA-INCOMPLETA`). Se pintan en rojo.
-- **por vencer** — el certificado esta bien, pero vence dentro del umbral
-  (30 dias por defecto, o lo que diga `--warn-days`). Se pintan en amarillo, y
-  en amarillo resaltado si faltan menos de 7 dias.
+## Salida
 
 ```
-certop  24 filas  refresco 5s  orden grupo  ultima 15:22:03 (812ms)  24 por vencer (<30d)
+$ certop --once --format table
+GRUPO  HOST                AF  IP                        PUERTO  TCP  EXPIRA  TLS   EMISOR                    ESTADO
+email  mail.lacnic.net.uy  4   168.121.184.3             993     ok   160d    -123  DigiCert Global G2 TLS..  OK
+email  mail.lacnic.net.uy  6   2001:13c7:7001:110::3     993     ok   160d    -123  DigiCert Global G2 TLS..  OK
+email  mail.lacnic.net.uy  4   168.121.184.3             465     ok   160d    --23  DigiCert Global G2 TLS..  OK
+email  mail.lacnic.net.uy  6   2001:13c7:7001:110::3     465     ok   160d    --23  DigiCert Global G2 TLS..  OK
+web    www.lacnic.net      4   200.3.14.184              443     ok   24d     --23  DigiCert Global G2 TLS..  OK
+web    www.lacnic.net      6   2001:13c7:7002:4128::184  443     ok   24d     --23  DigiCert Global G2 TLS..  OK
 ```
 
-### Columnas AF e IP
+Tres entradas del inventario, seis filas: cada host es dual-stack. En el ejemplo
+tambien se ve que el puerto 993 acepta TLS 1.1 (`-123`) y el 465 no (`--23`).
 
-`AF` es la familia de la direccion chequeada (`4` o `6`) y `IP` la direccion
-concreta. En la pantalla de refresco la IP aparece cuando el ancho de la terminal
-alcanza; en CSV y JSON estan siempre.
+### Columnas
+
+| Columna | Significado |
+|---|---|
+| `AF` | familia de la direccion chequeada: `4` o `6`, `-` si no se resolvio |
+| `IP` | la direccion concreta a la que se conecto |
+| `TCP` | `ok`, `rechazado`, `timeout`, `dns`, `error` |
+| `EXPIRA` | dias hasta el vencimiento; negativo si ya vencio |
+| `TLS` | versiones aceptadas, ver abajo |
+| `ESTADO` | resultado de validar el certificado, ver abajo |
+
+En la pantalla de refresco la `IP` aparece solo cuando el ancho de la terminal
+alcanza; en CSV y JSON esta siempre.
 
 ### Columna TLS
 
@@ -135,9 +155,27 @@ invalido igual reporte expiracion y emisor. La validacion se corre aparte:
 | `OK` | valida contra las raices del sistema |
 | `EXPIRADO` | vencido, o todavia no valido |
 | `SELF-SIGNED` | autofirmado |
-| `NOMBRE-NO-COINCIDE` | el nombre del destino no esta en el certificado |
+| `NOMBRE-NO-COINCIDE` | el nombre verificado no esta en el certificado — si es un nodo detras de un CNAME, es lo que resuelve [`expect`](#nombre-esperado-expect) |
 | `CADENA-INCOMPLETA` | no se pudo construir una cadena confiable |
 | `ERROR` | fallo el handshake |
+
+### CSV
+
+Es el formato por defecto de `--once`. Columnas, en orden:
+
+```
+grupo, host, puerto, af, ip, tcp, expira_utc, dias_restantes, emisor,
+estado_cert, tls_negociada, cipher, clave, firma, tls10, tls11, tls12, tls13
+```
+
+Los campos de certificado quedan vacios (no en cero) cuando no se llego a
+obtener uno.
+
+### JSON
+
+Un arreglo de objetos con los mismos datos, con la matriz de versiones anidada
+en `tls` (`true` / `false` / `null`) y `expect` presente solo si el destino lo
+define.
 
 ### Exit codes
 
@@ -145,15 +183,41 @@ invalido igual reporte expiracion y emisor. La validacion se corre aparte:
 `--warn-days`, alguna fila inalcanzable o por vencer. Con el chequeo por familia
 esto cubre tambien "IPv6 caido, IPv4 bien".
 
+## Modo refresco
+
+`q` salir · `r` refrescar ahora · `p` resondear versiones TLS · `s` cambiar
+orden (grupo / host / expiracion) · `espacio` pausar.
+
+El encabezado separa dos categorias, porque no piden la misma reaccion:
+
+- **con problemas** — hay algo roto: destino inalcanzable, sin certificado, o
+  certificado invalido (`EXPIRADO`, `SELF-SIGNED`, `NOMBRE-NO-COINCIDE`,
+  `CADENA-INCOMPLETA`). Se pintan en rojo.
+- **por vencer** — el certificado esta bien, pero vence dentro del umbral
+  (30 dias por defecto, o lo que diga `--warn-days`). Se pintan en amarillo, y
+  en amarillo resaltado si faltan menos de 7 dias.
+
+```
+certop  24 filas  refresco 5s  orden grupo  ultima 15:22:03 (812ms)  24 por vencer (<30d)
+```
+
+Las filas se ordenan de forma estable entre pasadas: las direcciones de un mismo
+host quedan siempre juntas y en el mismo orden, aunque el DNS rote sus
+respuestas.
+
 ## Compatibilidad
 
 En 1.0 el CSV gano las columnas `af` e `ip` despues de `puerto`, y el JSON gano
-`af`, `ip` y `expect`. Cualquier consumidor que lea las columnas por posicion hay
-que ajustarlo; por nombre no cambia nada.
+`af`, `ip` y `expect`. Un consumidor que lea las columnas por posicion hay que
+ajustarlo; por nombre no cambia nada.
+
+Los inventarios de 0.9.x siguen parseando sin cambios: `expect` y la forma de
+tabla inline son opcionales.
 
 ## Costo de los sondeos
 
 Determinar la matriz de versiones cuesta ~5 handshakes por destino, contra 1 del
-chequeo de certificado. Por eso se sondea una sola vez y se cachea: los
-refrescos posteriores solo re-chequean socket y expiracion. `--probe-always`
-reconstruye la matriz en cada ciclo, y la tecla `p` fuerza un re-sondeo puntual.
+chequeo de certificado. Por eso se sondea una sola vez por direccion y se
+cachea: los refrescos posteriores solo re-chequean socket y expiracion.
+`--probe-always` reconstruye la matriz en cada ciclo, y la tecla `p` fuerza un
+re-sondeo puntual.

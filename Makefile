@@ -7,7 +7,7 @@ DISTDIR := dist
 RELEASEDIR := release
 # Version declarada del proyecto. Se puede pisar desde el entorno, con o sin la
 # v inicial: `VERSION=v1.1 make release`.
-VERSION ?= 1.0
+VERSION ?= 1.1
 # Version sin la v; el tag siempre la lleva.
 RELVERSION := $(VERSION:v%=%)
 TAG        := v$(RELVERSION)

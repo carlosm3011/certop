@@ -1,0 +1,4 @@
+/certop
+/dist/
+# inventario real del operador; el ejemplo si se versiona
+/hosts.toml

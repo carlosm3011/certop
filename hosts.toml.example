@@ -1,0 +1,22 @@
+# Inventario de ejemplo. Cada tabla es un grupo; la clave `hosts` lista los
+# destinos en formato host:puerto.
+
+[frontends]
+hosts = [
+  "rpki-fe-1.lacnic.net:443",
+  "rpki-fe-2.lacnic.net:443",
+]
+
+[rpki-load-balancers]
+hosts = [
+  "lb-rpki-1.lacnic.net:443",
+  "lb-rpki-2.lacnic.net:443",
+  "lb-rpki-3.lacnic.net:443",
+]
+
+[email]
+hosts = [
+  "mail.lacnic.net:993",
+  "mail.lacnic.net.uy:993",
+  "mail.lacnic.net.uy:465",
+]

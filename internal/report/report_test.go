@@ -1,0 +1,148 @@
+package report
+
+import (
+	"bytes"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/csv"
+	"encoding/json"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/lacniclabs/certop/internal/inventory"
+	"github.com/lacniclabs/certop/internal/probe"
+)
+
+var checkedAt = time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC)
+
+func sample() []probe.Result {
+	ok := probe.Result{
+		Target:     inventory.Target{Group: "frontends", Host: "rpki-fe-1.lacnic.net", Port: "443", Addr: "rpki-fe-1.lacnic.net:443"},
+		TCP:        probe.TCPOK,
+		Leaf:       &x509.Certificate{},
+		NotAfter:   checkedAt.Add(45 * 24 * time.Hour),
+		DaysLeft:   45,
+		Issuer:     "Let's Encrypt R11",
+		CertStatus: probe.CertOK,
+		NegVersion: tls.VersionTLS13,
+		NegCipher:  tls.TLS_AES_256_GCM_SHA384,
+		KeyType:    "ECDSA P-256",
+		SigAlg:     x509.SHA256WithRSA.String(),
+		Versions: map[uint16]probe.VerState{
+			tls.VersionTLS10: probe.VerNo, tls.VersionTLS11: probe.VerNo,
+			tls.VersionTLS12: probe.VerYes, tls.VersionTLS13: probe.VerYes,
+		},
+		CheckedAt: checkedAt,
+	}
+	down := probe.Result{
+		Target:    inventory.Target{Group: "email", Host: "mail.lacnic.net.uy", Port: "465", Addr: "mail.lacnic.net.uy:465"},
+		TCP:       probe.TCPRefused,
+		CheckedAt: checkedAt,
+	}
+	return []probe.Result{ok, down}
+}
+
+func TestWriteCSV(t *testing.T) {
+	var buf bytes.Buffer
+	if err := WriteCSV(&buf, sample()); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := csv.NewReader(&buf).ReadAll()
+	if err != nil {
+		t.Fatalf("CSV invalido: %v", err)
+	}
+	if len(rows) != 3 {
+		t.Fatalf("got %d filas, want 3", len(rows))
+	}
+	if len(rows[0]) != len(csvHeader) {
+		t.Errorf("encabezado con %d columnas, want %d", len(rows[0]), len(csvHeader))
+	}
+	if rows[1][0] != "frontends" || rows[1][5] != "45" || rows[1][7] != "OK" {
+		t.Errorf("fila ok = %v", rows[1])
+	}
+	if rows[1][12] != "no" || rows[1][15] != "si" {
+		t.Errorf("matriz de versiones = %v", rows[1][12:])
+	}
+	// Un destino caido deja los campos de certificado vacios, no en cero.
+	if rows[2][4] != "" || rows[2][5] != "" {
+		t.Errorf("destino caido deberia tener expiracion vacia: %v", rows[2])
+	}
+	if rows[2][3] != "rechazado" {
+		t.Errorf("tcp = %q", rows[2][3])
+	}
+}
+
+func TestWriteTable(t *testing.T) {
+	var buf bytes.Buffer
+	if err := WriteTable(&buf, sample()); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	for _, want := range []string{"GRUPO", "rpki-fe-1.lacnic.net", "--23", "45d", "Let's Encrypt R11", "rechazado", Legend} {
+		if !strings.Contains(out, want) {
+			t.Errorf("falta %q en:\n%s", want, out)
+		}
+	}
+}
+
+func TestWriteJSON(t *testing.T) {
+	var buf bytes.Buffer
+	if err := WriteJSON(&buf, sample()); err != nil {
+		t.Fatal(err)
+	}
+	var got []map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("JSON invalido: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d elementos", len(got))
+	}
+	tlsMap, ok := got[0]["tls"].(map[string]any)
+	if !ok {
+		t.Fatalf("tls no es un objeto: %T", got[0]["tls"])
+	}
+	if tlsMap["1.3"] != true || tlsMap["1.0"] != false {
+		t.Errorf("matriz = %v", tlsMap)
+	}
+	if got[0]["dias_restantes"] != float64(45) {
+		t.Errorf("dias_restantes = %v", got[0]["dias_restantes"])
+	}
+	// Sin certificado los campos van en null, no en 0.
+	if got[1]["dias_restantes"] != nil || got[1]["expira_utc"] != nil {
+		t.Errorf("destino caido = %v", got[1])
+	}
+	if tlsMap2 := got[1]["tls"].(map[string]any); tlsMap2["1.2"] != nil {
+		t.Errorf("versiones sin sondear deberian ser null: %v", tlsMap2)
+	}
+}
+
+func TestWriteUnknownFormat(t *testing.T) {
+	if err := Write(&bytes.Buffer{}, sample(), "yaml"); err == nil {
+		t.Error("se esperaba error")
+	}
+}
+
+func TestExitCode(t *testing.T) {
+	healthy := sample()[:1]
+	all := sample()
+
+	cases := []struct {
+		name     string
+		results  []probe.Result
+		warnDays int
+		want     int
+	}{
+		{"desactivado", all, -1, ExitOK},
+		{"sano bajo umbral", healthy, 30, ExitOK},
+		{"expira antes del umbral", healthy, 60, ExitWarn},
+		{"destino inalcanzable", all, 1, ExitWarn},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ExitCode(tc.results, tc.warnDays); got != tc.want {
+				t.Errorf("ExitCode = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}

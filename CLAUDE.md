@@ -93,6 +93,20 @@ These were found the hard way — don't undo them:
 - **`ui.layout` allocates width strictly**: fixed columns first, then host, group, IP and
   issuer in that priority order, so the sum never exceeds the terminal width.
 
+## Releases
+
+No Go runner exists on the GitLab instance, so binaries are built **locally** and
+uploaded to the generic package registry by `scripts/release.sh` (`make release`); the
+pipeline (`scripts/gitlab-release.sh`, shell runner, curl only) merely creates the
+Release object pointing at them. The upload therefore has to happen *before* the tag is
+pushed — that ordering is the whole design, don't reorder it.
+
+- `VERSION` accepts `1.1` or `v1.1`; the tag is always `v`-prefixed. The package registry
+  demands three components, so `1.1` is uploaded as `1.1.0`.
+- `make release-dry` runs the whole thing without uploading, tagging or pushing.
+- The CI script uses `jq` when present to put the tag message in the release description,
+  and falls back to a generated one when it is not — never hand-escape the tag message.
+
 ## Out of scope
 
 STARTTLS (ports 25/587/143/5432). Every port in the spec's inventory is implicit TLS.

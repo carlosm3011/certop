@@ -3,16 +3,19 @@
 BINARY  := certop
 PKG     := ./cmd/certop
 DISTDIR := dist
-# Version declarada del proyecto. Se le agrega la revision de git cuando el
-# arbol de trabajo no coincide con un tag limpio.
+# Version declarada del proyecto. Se puede pisar desde el entorno, con o sin la
+# v inicial: `VERSION=v1.1 make release`.
 VERSION ?= 1.0
+# Version sin la v; el tag siempre la lleva.
+RELVERSION := $(VERSION:v%=%)
+TAG        := v$(RELVERSION)
 # Solo la revision: --exclude '*' evita que un tag anotado se cuele aca y
 # termine produciendo un "0.9.1+v0.9.1" redundante.
 GITREV  := $(shell git describe --always --abbrev=7 --dirty --exclude '*' 2>/dev/null)
 ifneq ($(GITREV),)
-FULLVERSION := $(VERSION)+$(GITREV)
+FULLVERSION := $(RELVERSION)+$(GITREV)
 else
-FULLVERSION := $(VERSION)
+FULLVERSION := $(RELVERSION)
 endif
 LDFLAGS := -s -w -X main.version=$(FULLVERSION)
 GOFLAGS := CGO_ENABLED=0
@@ -63,6 +66,16 @@ vet:
 .PHONY: check
 check: vet test
 
+## release: compila, sube los binarios y pushea el tag (VERSION=v1.1 make release)
+.PHONY: release
+release:
+	@VERSION=$(RELVERSION) DISTDIR=$(DISTDIR) scripts/release.sh
+
+## release-dry: muestra que haria release, sin subir ni pushear nada
+.PHONY: release-dry
+release-dry:
+	@DRY_RUN=1 VERSION=$(RELVERSION) DISTDIR=$(DISTDIR) scripts/release.sh
+
 ## clean: borra dist/ y el binario local
 .PHONY: clean
 clean:
@@ -74,11 +87,11 @@ help:
 	@echo "certop $(FULLVERSION) - targets disponibles"
 	@echo
 	@grep -E '^## ' $(MAKEFILE_LIST) | sed 's/^## //' | \
-		awk -F': ' '{ printf "  %-8s %s\n", $$1, substr($$0, index($$0, ": ") + 2) }'
+		awk -F': ' '{ printf "  %-12s %s\n", $$1, substr($$0, index($$0, ": ") + 2) }'
 	@echo
 	@echo "Tambien se puede compilar una plataforma sola:"
 	@for p in $(PLATFORMS); do echo "  make $$p"; done
 	@echo
 	@echo "Variables:"
-	@echo "  VERSION   version del proyecto (default: $(VERSION); se embebe $(FULLVERSION))"
+	@echo "  VERSION   version del proyecto, con o sin v (default: $(VERSION); se embebe $(FULLVERSION))"
 	@echo "  DISTDIR   directorio de salida de dist (default: $(DISTDIR))"

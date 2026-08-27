@@ -214,6 +214,44 @@ ajustarlo; por nombre no cambia nada.
 Los inventarios de 0.9.x siguen parseando sin cambios: `expect` y la forma de
 tabla inline son opcionales.
 
+## Releases
+
+No hay runner con Go, asi que los binarios se compilan **localmente** y se suben
+al package registry del proyecto; el pipeline de GitLab solo crea el objeto
+Release apuntando a lo que ya esta subido.
+
+```sh
+export GITLAB_TOKEN=...          # token personal con scope api
+VERSION=v1.1 make release
+```
+
+`make release` hace, en este orden:
+
+1. controles: arbol limpio, rama `main`, el commit ya pusheado, y que el tag no
+   exista ni local ni en el remoto;
+2. `make dist` y `SHA256SUMS`;
+3. sube los tres archivos al package registry;
+4. crea el tag anotado y lo pushea — eso dispara el pipeline.
+
+El orden importa: el pipeline crea la release apuntando a los binarios, asi que
+tienen que estar arriba antes de que el tag exista. Si alguien pushea un tag a
+mano, el job falla con un mensaje claro en vez de crear una release con links
+rotos.
+
+Para ver que haria sin tocar nada:
+
+```sh
+VERSION=v1.1 make release-dry
+```
+
+`VERSION` acepta `1.1` o `v1.1`; el tag siempre queda como `v1.1`. Sin `VERSION`
+en el entorno rige el default del Makefile. El package registry exige versiones
+de tres componentes, asi que `1.1` se sube como `1.1.0` — el tag y el binario
+siguen diciendo `1.1`.
+
+El host y el proyecto salen del remoto `origin`; si el remoto no es una URL de
+GitLab se pueden fijar con `GITLAB_HOST` y `GITLAB_PROJECT`.
+
 ## Costo de los sondeos
 
 Determinar la matriz de versiones cuesta ~5 handshakes por destino, contra 1 del

@@ -1,0 +1,17 @@
+# No hay runner con Go: los binarios se compilan y se suben al package registry
+# desde la maquina del operador con `make release`, y este pipeline solo crea el
+# objeto Release apuntando a lo que ya esta subido.
+#
+# El job necesita git y curl, nada mas. Si el runner tiene jq, la descripcion de
+# la release sale del mensaje del tag.
+
+stages:
+  - release
+
+crear-release:
+  stage: release
+  rules:
+    # Solo tags de version: v1.1, v1.1.2, v2.0-rc1
+    - if: '$CI_COMMIT_TAG =~ /^v[0-9]+\.[0-9]+/'
+  script:
+    - scripts/gitlab-release.sh

@@ -330,6 +330,9 @@ func (c *Checker) check(ctx context.Context, t inventory.Target, ip net.IP) Resu
 	conn.Close()
 	if err != nil {
 		r.CertStatus = CertError
+		if errors.Is(err, errNoStartTLS) {
+			r.CertStatus = CertNoStartTLS
+		}
 		r.Err = err
 		return r
 	}
@@ -359,7 +362,7 @@ func (c *Checker) versionMatrix(ctx context.Context, t inventory.Target, ip net.
 	// La clave incluye la direccion y el nombre verificado: dos nodos detras
 	// del mismo CNAME pueden tener configuracion distinta, que es justamente
 	// lo que se quiere detectar.
-	key := net.JoinHostPort(ip.String(), t.Port) + "|" + t.VerifyName()
+	key := net.JoinHostPort(ip.String(), t.Port) + "|" + t.VerifyName() + "|" + t.StartTLS
 	if !c.ProbeAlways {
 		c.mu.Lock()
 		hit, ok := c.cache[key]
@@ -402,8 +405,15 @@ func (c *Checker) dial(ctx context.Context, addr string) (net.Conn, error) {
 }
 
 func (c *Checker) handshake(ctx context.Context, conn net.Conn, t inventory.Target, min, max uint16) (tls.ConnectionState, error) {
+	// El deadline cubre el preambulo en claro ademas del handshake: para un
+	// destino STARTTLS, --timeout es el presupuesto de la sesion entera.
 	if err := conn.SetDeadline(time.Now().Add(c.Timeout)); err != nil {
 		return tls.ConnectionState{}, err
+	}
+	if t.StartTLS != "" {
+		if err := startTLS(conn, t.StartTLS); err != nil {
+			return tls.ConnectionState{}, err
+		}
 	}
 	tc := tls.Client(conn, tlsConfig(t.VerifyName(), min, max))
 	if err := tc.HandshakeContext(ctx); err != nil {

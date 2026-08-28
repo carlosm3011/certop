@@ -41,7 +41,7 @@ func Write(w io.Writer, results []probe.Result, format string) error {
 var csvHeader = []string{
 	"grupo", "host", "puerto", "af", "ip", "tcp", "expira_utc", "dias_restantes",
 	"emisor", "estado_cert", "tls_negociada", "cipher", "clave", "firma",
-	"tls10", "tls11", "tls12", "tls13",
+	"tls10", "tls11", "tls12", "tls13", "starttls",
 }
 
 // WriteCSV es la salida por defecto de --once. La matriz de versiones se
@@ -60,6 +60,7 @@ func WriteCSV(w io.Writer, results []probe.Result) error {
 		for _, v := range probe.Versions {
 			row = append(row, verState(r, v))
 		}
+		row = append(row, r.StartTLS)
 		if err := cw.Write(row); err != nil {
 			return err
 		}
@@ -96,6 +97,7 @@ type jsonResult struct {
 	Host       string         `json:"host"`
 	Port       string         `json:"puerto"`
 	Expect     string         `json:"expect,omitempty"`
+	StartTLS   string         `json:"starttls,omitempty"`
 	AF         int            `json:"af"`
 	IP         string         `json:"ip"`
 	TCP        string         `json:"tcp"`
@@ -126,6 +128,7 @@ func WriteJSON(w io.Writer, results []probe.Result) error {
 			Host:       r.Host,
 			Port:       r.Port,
 			Expect:     r.Expect,
+			StartTLS:   r.StartTLS,
 			AF:         r.AF,
 			IP:         r.IPText(),
 			TCP:        r.TCP.String(),

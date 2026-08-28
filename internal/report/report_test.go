@@ -39,7 +39,7 @@ func sample() []probe.Result {
 		CheckedAt: checkedAt,
 	}
 	down := probe.Result{
-		Target:    inventory.Target{Group: "email", Host: "mail.lacnic.net.uy", Port: "465", Addr: "mail.lacnic.net.uy:465"},
+		Target:    inventory.Target{Group: "email", Host: "mail.lacnic.net.uy", Port: "465", Addr: "mail.lacnic.net.uy:465", StartTLS: "smtp"},
 		IP:        net.ParseIP("2001:db8::1"),
 		AF:        6,
 		TCP:       probe.TCPRefused,
@@ -91,6 +91,13 @@ func TestWriteCSV(t *testing.T) {
 	if col(rows[2], "tcp") != "rechazado" {
 		t.Errorf("tcp = %q", col(rows[2], "tcp"))
 	}
+	// starttls va al final de la fila y queda vacio en TLS implicito.
+	if csvHeader[len(csvHeader)-1] != "starttls" {
+		t.Errorf("starttls deberia ser la ultima columna: %v", csvHeader)
+	}
+	if col(rows[1], "starttls") != "" || col(rows[2], "starttls") != "smtp" {
+		t.Errorf("starttls = %q / %q", col(rows[1], "starttls"), col(rows[2], "starttls"))
+	}
 }
 
 func TestWriteTable(t *testing.T) {
@@ -130,6 +137,12 @@ func TestWriteJSON(t *testing.T) {
 	}
 	if got[0]["expect"] != "rrdp.lacnic.net" {
 		t.Errorf("expect = %v", got[0]["expect"])
+	}
+	if got[1]["starttls"] != "smtp" {
+		t.Errorf("starttls json = %v", got[1]["starttls"])
+	}
+	if _, ok := got[0]["starttls"]; ok {
+		t.Errorf("starttls no deberia aparecer en TLS implicito: %v", got[0]["starttls"])
 	}
 	// Sin expect la clave se omite.
 	if _, ok := got[1]["expect"]; ok {

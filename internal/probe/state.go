@@ -46,6 +46,9 @@ const (
 	CertSelfSigned
 	CertHostnameMismatch
 	CertIncompleteChain
+	// CertNoStartTLS: el puerto contesta, pero no ofrece STARTTLS, asi que no
+	// hay certificado que mirar.
+	CertNoStartTLS
 	CertError
 )
 
@@ -61,6 +64,8 @@ func (s CertStatus) String() string {
 		return "NOMBRE-NO-COINCIDE"
 	case CertIncompleteChain:
 		return "CADENA-INCOMPLETA"
+	case CertNoStartTLS:
+		return "SIN-STARTTLS"
 	case CertError:
 		return "ERROR"
 	default:

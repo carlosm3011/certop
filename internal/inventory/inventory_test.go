@@ -20,10 +20,10 @@ hosts = ["rpki-fe-1.lacnic.net:443"]
 		t.Fatalf("Parse: %v", err)
 	}
 	want := []Target{
-		{"email", "mail.lacnic.net", "993", "mail.lacnic.net:993", ""},
-		{"email", "mail.lacnic.net.uy", "993", "mail.lacnic.net.uy:993", ""},
-		{"email", "mail.lacnic.net.uy", "465", "mail.lacnic.net.uy:465", ""},
-		{"frontends", "rpki-fe-1.lacnic.net", "443", "rpki-fe-1.lacnic.net:443", ""},
+		{"email", "mail.lacnic.net", "993", "mail.lacnic.net:993", "", ""},
+		{"email", "mail.lacnic.net.uy", "993", "mail.lacnic.net.uy:993", "", ""},
+		{"email", "mail.lacnic.net.uy", "465", "mail.lacnic.net.uy:465", "", ""},
+		{"frontends", "rpki-fe-1.lacnic.net", "443", "rpki-fe-1.lacnic.net:443", "", ""},
 	}
 	if len(got) != len(want) {
 		t.Fatalf("got %d targets, want %d: %+v", len(got), len(want), got)
@@ -112,8 +112,21 @@ func TestLoadExample(t *testing.T) {
 	if err != nil {
 		t.Fatalf("el inventario de ejemplo no parsea: %v", err)
 	}
-	if len(got) != 8 {
-		t.Errorf("got %d destinos, want 8", len(got))
+	if len(got) != 9 {
+		t.Errorf("got %d destinos, want 9", len(got))
+	}
+	// El ejemplo trae un puerto 25: tiene que inferir smtp solo.
+	var smtp int
+	for _, tgt := range got {
+		if tgt.Port == "25" {
+			smtp++
+			if tgt.StartTLS != StartTLSSMTP {
+				t.Errorf("puerto 25 en el ejemplo: starttls = %q", tgt.StartTLS)
+			}
+		}
+	}
+	if smtp != 1 {
+		t.Errorf("se esperaba un destino en el puerto 25, hay %d", smtp)
 	}
 }
 
@@ -184,5 +197,72 @@ func TestParseUnknownKeyMentionsIt(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "expct") {
 		t.Errorf("el error no menciona la clave: %v", err)
+	}
+}
+
+// El puerto decide el protocolo cuando no se dice nada.
+func TestStartTLSInferredFromPort(t *testing.T) {
+	got, err := Parse([]byte(`[email]
+hosts = [
+  "h:25",
+  "h:587",
+  "h:143",
+  "h:110",
+  "h:993",
+  "h:443",
+]`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"smtp", "smtp", "imap", "pop3", "", ""}
+	for i, w := range want {
+		if got[i].StartTLS != w {
+			t.Errorf("puerto %s: starttls = %q, want %q", got[i].Port, got[i].StartTLS, w)
+		}
+	}
+}
+
+func TestStartTLSExplicit(t *testing.T) {
+	got, err := Parse([]byte(`[a]
+starttls = "imap"
+hosts = [
+  "h:1234",
+  { addr = "h:2525", starttls = "smtp" },
+  { addr = "h:143",  starttls = "none" },
+]
+
+[b]
+hosts = [{ addr = "h:25", starttls = "none" }]`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// El default del grupo aplica a un puerto que no infiere nada.
+	if got[0].StartTLS != "imap" {
+		t.Errorf("default de grupo: %q", got[0].StartTLS)
+	}
+	// La entrada pisa al grupo.
+	if got[1].StartTLS != "smtp" {
+		t.Errorf("override por entrada: %q", got[1].StartTLS)
+	}
+	// "none" fuerza implicito aunque el grupo diga otra cosa.
+	if got[2].StartTLS != "" {
+		t.Errorf("none con grupo imap: %q", got[2].StartTLS)
+	}
+	// "none" tambien gana contra la inferencia por puerto.
+	if got[3].StartTLS != "" {
+		t.Errorf("none en el puerto 25: %q", got[3].StartTLS)
+	}
+}
+
+func TestStartTLSInvalid(t *testing.T) {
+	_, err := Parse([]byte(`[g]
+hosts = [{ addr = "h:25", starttls = "smtpp" }]`))
+	if err == nil {
+		t.Fatal("se esperaba error")
+	}
+	for _, want := range []string{"smtpp", "smtp"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("el error no menciona %q: %v", want, err)
+		}
 	}
 }

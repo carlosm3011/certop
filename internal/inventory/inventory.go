@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 
@@ -23,6 +24,9 @@ type Target struct {
 	// que estan detras de un CNAME y cuyo certificado nunca lleva su propio
 	// nombre. Vacio significa "el mismo host".
 	Expect string
+	// StartTLS es el protocolo con el que hay que negociar TLS sobre una
+	// sesion en claro ("smtp", "imap", "pop3"). Vacio es TLS implicito.
+	StartTLS string
 }
 
 // VerifyName es el nombre que se manda en SNI y contra el que se valida el
@@ -34,9 +38,31 @@ func (t Target) VerifyName() string {
 	return t.Host
 }
 
+// Protocolos de STARTTLS soportados. "none" fuerza TLS implicito en un puerto
+// que de otro modo se inferiria.
+const (
+	StartTLSSMTP = "smtp"
+	StartTLSIMAP = "imap"
+	StartTLSPOP3 = "pop3"
+	startTLSNone = "none"
+)
+
+var startTLSValues = []string{StartTLSSMTP, StartTLSIMAP, StartTLSPOP3, startTLSNone}
+
+// startTLSByPort son los puertos bien conocidos que negocian TLS sobre una
+// sesion en claro. Un puerto que no este aca se trata como TLS implicito.
+var startTLSByPort = map[string]string{
+	"25":  StartTLSSMTP,
+	"587": StartTLSSMTP,
+	"143": StartTLSIMAP,
+	"110": StartTLSPOP3,
+}
+
 type group struct {
 	// Expect aplica a todas las entradas del grupo que no traigan el suyo.
 	Expect string `toml:"expect"`
+	// StartTLS aplica a todas las entradas del grupo que no traigan el suyo.
+	StartTLS string `toml:"starttls"`
 	// Hosts admite dos formas por entrada: "host:puerto", o la tabla inline
 	// { addr = "host:puerto", expect = "nombre" }.
 	Hosts []any `toml:"hosts"`
@@ -72,7 +98,7 @@ func Parse(data []byte) ([]Target, error) {
 	for _, name := range names {
 		g := groups[name]
 		for _, raw := range g.Hosts {
-			t, err := parseEntry(name, g.Expect, raw)
+			t, err := parseEntry(name, g.Expect, g.StartTLS, raw)
 			if err != nil {
 				return nil, err
 			}
@@ -86,8 +112,8 @@ func Parse(data []byte) ([]Target, error) {
 }
 
 // parseEntry acepta tanto la forma corta (string) como la tabla inline.
-func parseEntry(groupName, groupExpect string, raw any) (Target, error) {
-	var addr, expect string
+func parseEntry(groupName, groupExpect, groupStartTLS string, raw any) (Target, error) {
+	var addr, expect, startTLS string
 
 	switch v := raw.(type) {
 	case string:
@@ -103,9 +129,11 @@ func parseEntry(groupName, groupExpect string, raw any) (Target, error) {
 				addr = s
 			case "expect":
 				expect = s
+			case "starttls":
+				startTLS = s
 			default:
 				// Un typo silencioso aca dejaria el destino mal chequeado.
-				return Target{}, fmt.Errorf("grupo %q: clave desconocida %q (validas: addr, expect)", groupName, key)
+				return Target{}, fmt.Errorf("grupo %q: clave desconocida %q (validas: addr, expect, starttls)", groupName, key)
 			}
 		}
 		if addr == "" {
@@ -129,11 +157,38 @@ func parseEntry(groupName, groupExpect string, raw any) (Target, error) {
 	if expect == "" {
 		expect = groupExpect
 	}
+	if startTLS == "" {
+		startTLS = groupStartTLS
+	}
+	startTLS, err = resolveStartTLS(groupName, addr, port, startTLS)
+	if err != nil {
+		return Target{}, err
+	}
+
 	return Target{
-		Group:  groupName,
-		Host:   host,
-		Port:   port,
-		Addr:   net.JoinHostPort(host, port),
-		Expect: expect,
+		Group:    groupName,
+		Host:     host,
+		Port:     port,
+		Addr:     net.JoinHostPort(host, port),
+		Expect:   expect,
+		StartTLS: startTLS,
 	}, nil
+}
+
+// resolveStartTLS valida el valor explicito y, si no hay ninguno, lo infiere
+// del puerto. Devuelve cadena vacia para TLS implicito, de modo que el resto
+// del codigo pregunta una sola cosa.
+func resolveStartTLS(groupName, addr, port, value string) (string, error) {
+	if value == "" {
+		return startTLSByPort[port], nil
+	}
+	if !slices.Contains(startTLSValues, value) {
+		// Un typo silencioso dejaria el destino mal chequeado.
+		return "", fmt.Errorf("grupo %q: entrada %q con starttls %q invalido (validos: %v)",
+			groupName, addr, value, startTLSValues)
+	}
+	if value == startTLSNone {
+		return "", nil
+	}
+	return value, nil
 }

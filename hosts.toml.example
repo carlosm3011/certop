@@ -7,6 +7,10 @@
 # grupo, o por entrada con la forma { addr = "...", expect = "..." }.
 #
 # Cada nombre se expande en una fila por cada registro A y AAAA que resuelva.
+#
+# Los puertos que negocian STARTTLS se detectan solos (25 y 587 smtp, 143 imap,
+# 110 pop3); `starttls` pisa esa inferencia y `starttls = "none"` fuerza TLS
+# implicito.
 
 [frontends]
 expect = "rrdp.lacnic.net"
@@ -25,6 +29,7 @@ hosts = [
 
 [email]
 hosts = [
+  "mail.lacnic.net:25",
   "mail.lacnic.net:993",
   "mail.lacnic.net.uy:993",
   "mail.lacnic.net.uy:465",

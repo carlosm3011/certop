@@ -114,7 +114,30 @@ over ssh, CI uses `CI_JOB_TOKEN`.
 - The `+sha` in `--version` is the commit the binary was *built from*, necessarily one
   before the commit that contains it.
 
+## STARTTLS
+
+`Checker.handshake` is the single choke point both TLS paths go through (the certificate
+check and every version probe), so the plaintext preamble hooks in there and both inherit
+it. Protocol comes from `Target.StartTLS`, inferred from well-known ports in
+`internal/inventory` (25/587 smtp, 143 imap, 110 pop3) unless the `starttls` key overrides
+it; `"none"` normalises to empty so the rest of the code asks one question.
+
+- `errNoStartTLS` (`internal/probe/starttls.go`) separates "server does not offer it" —
+  a finding, surfaced as `CertNoStartTLS` / `SIN-STARTTLS` — from protocol or network
+  failure, which stays `CertError`. Keep that distinction.
+- SMTP replies are **multiline**: `250-CAP` continuation lines then a final `250 CAP`.
+  The whole block must be consumed or the next read starts mid-response.
+- After the preamble, `startTLS` rejects anything left in the `bufio.Reader`: the
+  handshake reads from the conn, not the reader, so buffered bytes would vanish and fail
+  the handshake confusingly.
+- The connection deadline set in `handshake` now covers preamble **plus** handshake, so
+  `--timeout` is the whole-session budget.
+- Version probing runs the preamble too — ~5 sessions per address on the first pass, 1
+  afterwards thanks to the cache, which is what keeps this from hammering a mail server
+  every refresh. There is a test asserting exactly that.
+
 ## Out of scope
 
-STARTTLS (ports 25/587/143/5432). Every port in the spec's inventory is implicit TLS.
-Raise it rather than silently adding it.
+PostgreSQL, LDAP, MySQL, XMPP and FTP STARTTLS. Postgres is not a line protocol (binary
+`SSLRequest` packet, one byte back); the others are considerably more machinery. They
+would hook into the same place if needed.

@@ -6,6 +6,8 @@ Cada entrada tiene un identificador estable tipo `FUT-3`, para poder referirse a
 ella sin repetir el titulo. Los numeros no se reciclan: si una entrada se
 resuelve o se descarta, su numero se retira con ella.
 
+Resueltos: FUT-5 (STARTTLS para smtp, imap y pop3).
+
 ## FUT-1 — `--init`: generar un hosts.toml de arranque
 
 Un flag que cree un `hosts.toml` por defecto, con algun destino conocido como
@@ -37,9 +39,3 @@ La tabla y la pantalla muestran `HOST AF IP PUERTO`; el CSV y el JSON usan
 `host, puerto, af, ip`. Alinear la tabla y la pantalla al orden del CSV es
 cosmetico y no rompe nada; tocar el CSV seria un segundo cambio incompatible
 despues del de 1.0.
-
-## FUT-5 — STARTTLS
-
-Solo se soporta TLS implicito. Los puertos que negocian STARTTLS (25, 587, 143,
-5432) reportan `ERROR`. El inventario original tenia `mail.lacnic.net:25`, asi
-que el caso es real y no hipotetico.

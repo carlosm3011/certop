@@ -52,8 +52,7 @@ Una entrada puede escribirse de dos formas:
 | `{ addr = "host:puerto", expect = "nombre" }` | cuando ese destino necesita un `expect` propio |
 
 Un mismo host puede repetirse con puertos distintos, como `mail.lacnic.net.uy`
-arriba: son dos destinos independientes. Solo se soporta TLS implicito (443,
-465, 993, ...); no hay STARTTLS.
+arriba: son dos destinos independientes.
 
 ### Nombre esperado (`expect`)
 
@@ -65,6 +64,30 @@ reporta como `NOMBRE-NO-COINCIDE`, que es ruido: el nodo esta bien configurado.
 `expect` fija el nombre que se manda en **SNI** y contra el que se **valida** el
 certificado — exactamente lo que hace un cliente real que llega por el CNAME.
 Se declara a nivel de grupo, y una entrada puede pisarlo.
+
+### STARTTLS
+
+Los puertos que negocian TLS sobre una sesion en claro se detectan por el
+puerto: `25` y `587` hablan `smtp`, `143` `imap`, `110` `pop3`. El resto se
+trata como TLS implicito, como antes.
+
+La clave `starttls` pisa esa inferencia, en el grupo o en una entrada:
+
+```toml
+[email]
+hosts = [
+  "mail.lacnic.net:25",                                  # smtp por el puerto
+  "mail.lacnic.net.uy:993",                              # implicito
+  { addr = "mail.lacnic.net:2525", starttls = "smtp" },  # puerto no estandar
+  { addr = "raro.lacnic.net:143",  starttls = "none" },  # forzar implicito
+]
+```
+
+Si el servidor contesta pero no ofrece STARTTLS — o lo anuncia y despues lo
+rechaza — el estado es `SIN-STARTTLS`, que cuenta como problema.
+
+Soportados: `smtp`, `imap`, `pop3` y `none`. PostgreSQL, LDAP, MySQL, XMPP y FTP
+no estan.
 
 ### IPv4 e IPv6
 
@@ -136,6 +159,10 @@ tambien se ve que el puerto 993 acepta TLS 1.1 (`-123`) y el 465 no (`--23`).
 | `TLS` | versiones aceptadas, ver abajo |
 | `ESTADO` | resultado de validar el certificado, ver abajo |
 
+El protocolo de STARTTLS usado aparece en CSV y JSON, no en la tabla ni en la
+pantalla: el estado `SIN-STARTTLS` ya dice lo que hace falta y los formatos
+angostos no dan para otra columna.
+
 En la pantalla de refresco la `IP` aparece solo cuando el ancho de la terminal
 alcanza; en CSV y JSON esta siempre.
 
@@ -157,6 +184,7 @@ invalido igual reporte expiracion y emisor. La validacion se corre aparte:
 | `SELF-SIGNED` | autofirmado |
 | `NOMBRE-NO-COINCIDE` | el nombre verificado no esta en el certificado — si es un nodo detras de un CNAME, es lo que resuelve [`expect`](#nombre-esperado-expect) |
 | `CADENA-INCOMPLETA` | no se pudo construir una cadena confiable |
+| `SIN-STARTTLS` | el puerto contesta pero no negocia TLS |
 | `ERROR` | fallo el handshake |
 
 ### CSV
@@ -165,7 +193,8 @@ Es el formato por defecto de `--once`. Columnas, en orden:
 
 ```
 grupo, host, puerto, af, ip, tcp, expira_utc, dias_restantes, emisor,
-estado_cert, tls_negociada, cipher, clave, firma, tls10, tls11, tls12, tls13
+estado_cert, tls_negociada, cipher, clave, firma, tls10, tls11, tls12, tls13,
+starttls
 ```
 
 Los campos de certificado quedan vacios (no en cero) cuando no se llego a
@@ -210,6 +239,9 @@ respuestas.
 En 1.0 el CSV gano las columnas `af` e `ip` despues de `puerto`, y el JSON gano
 `af`, `ip` y `expect`. Un consumidor que lea las columnas por posicion hay que
 ajustarlo; por nombre no cambia nada.
+
+La columna `starttls` se agrego **al final** de la fila del CSV, justamente para
+no volver a mover posiciones.
 
 Los inventarios de 0.9.x siguen parseando sin cambios: `expect` y la forma de
 tabla inline son opcionales.

@@ -54,6 +54,18 @@ hosts = [
 
 Una entrada sigue pudiendo ser un simple `"host:puerto"`.
 
+## STARTTLS
+
+Los puertos que negocian TLS sobre una sesion en claro se infieren del puerto —
+`25` y `587` son `smtp`, `143` `imap`, `110` `pop3` — y la clave `starttls` pisa
+esa inferencia, con `none` para forzar TLS implicito. Se soportan esos tres
+protocolos, que comparten el mismo esqueleto: saludo, un comando, una respuesta,
+handshake.
+
+Un servidor que contesta pero no ofrece STARTTLS, o que lo anuncia y despues lo
+rechaza, queda en `SIN-STARTTLS`: es un hallazgo sobre el servidor, no una falla
+del chequeo, y se distingue de un `ERROR` de protocolo o de red.
+
 ## Familias de direcciones
 
 Cada nombre se expande en **una fila por cada registro A y AAAA** que resuelva. Un

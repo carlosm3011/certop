@@ -14,9 +14,9 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           # La version sale del go.mod, para que no haya dos lugares que actualizar.
           go-version-file: go.mod

@@ -10,8 +10,8 @@ import (
 
 	"github.com/gdamore/tcell/v2"
 
-	"github.com/lacniclabs/certop/internal/inventory"
-	"github.com/lacniclabs/certop/internal/probe"
+	"github.com/carlosm3011/certop/internal/inventory"
+	"github.com/carlosm3011/certop/internal/probe"
 )
 
 // Modos de ordenamiento, ciclados con la tecla 's'.

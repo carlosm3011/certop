@@ -8,6 +8,17 @@ validez, y que versiones de TLS acepta el servidor. Corre en una pasada unica
 (reporte para cron o monitoreo) o en una pantalla que se refresca estilo
 `top`/`mtr`.
 
+## Instalar
+
+```sh
+go install github.com/carlosm3011/certop/cmd/certop@latest
+```
+
+Requiere Go 1.27 o superior, y funciona desde la version 1.3.0: los tags
+anteriores declaran otro module path y `go install` los rechaza. Tambien hay
+binarios ya compilados para linux/amd64 y darwin/arm64 en cada
+[release](https://github.com/carlosm3011/certop/releases).
+
 ## Compilar
 
 ```sh
@@ -17,7 +28,7 @@ make check    # go vet + go test
 make help     # lista todos los targets
 ```
 
-Requiere Go 1.27 o superior. Los binarios salen estaticos (`CGO_ENABLED=0`).
+Los binarios salen estaticos (`CGO_ENABLED=0`).
 
 ## Inventario
 
@@ -248,39 +259,57 @@ tabla inline son opcionales.
 
 ## Releases
 
-No hay runner con Go, asi que los binarios se compilan **localmente** y se
-commitean en `release/`; el pipeline solo crea el objeto Release apuntando a los
-archivos del repo. **No hace falta ningun token**: todo viaja por ssh con la
-misma llave que usas para pushear, y el job de CI usa el `CI_JOB_TOKEN` que
-GitLab inyecta solo.
+El repo vive en dos lados: un GitLab interno y el GitHub publico. Una release
+sale hacia los dos a la vez y con los **mismos binarios**.
+
+El GitLab interno no tiene runner con Go, asi que los binarios se compilan
+**localmente** y se commitean en `release/`; los dos pipelines solo crean el
+objeto Release apuntando a esos archivos. GitHub si podria compilarlos, pero
+subir los mismos bytes de los dos lados hace que un unico `SHA256SUMS` valga
+para ambos y evita la pregunta de cual binario es el bueno.
+
+**No hace falta ningun token**: git viaja por ssh con la misma llave que usas
+para pushear, y cada CI usa el token que se inyecta solo (`CI_JOB_TOKEN` en
+GitLab, `GITHUB_TOKEN` en Actions).
 
 ```sh
-VERSION=v1.1 make release
+VERSION=v1.3.0 make release
 ```
 
 `make release` hace, en este orden:
 
-1. controles: arbol limpio, rama `main`, en sincronia con el remoto, y que el
-   tag no exista ni local ni en el remoto;
+1. controles: version en semver de tres numeros, arbol limpio, rama `main`, en
+   sincronia con **cada** remoto, y que el tag no exista ni local ni en ninguno
+   de ellos;
 2. `make dist` y `SHA256SUMS`;
 3. copia los tres archivos a `release/` y fija `VERSION` en el Makefile, para
    que un `make build` posterior no siga diciendo la version vieja;
-4. commitea, pushea `main`, y recien ahi crea y pushea el tag — eso dispara el
-   pipeline.
+4. commitea, pushea `main` a todos los remotos, y recien ahi crea y pushea el
+   tag — eso dispara los dos pipelines.
 
-El orden importa: la release enlaza a los archivos del repo en ese tag, asi que
-el commit tiene que estar en el remoto antes que el tag. Si alguien pushea un
-tag a mano, el job falla con un mensaje claro en vez de crear una release con
-links rotos.
+El orden importa: la release de GitLab enlaza a los archivos del repo en ese
+tag, asi que el commit tiene que estar en el remoto antes que el tag. Si alguien
+pushea un tag a mano, los dos jobs fallan con un mensaje claro en vez de crear
+una release con links rotos o sin binarios.
+
+`REMOTES` pisa la lista de remotos (default `origin github`); los que no esten
+configurados se saltean con un aviso, para que un clon con uno solo pueda
+liberar igual.
 
 Para ver que haria sin tocar nada:
 
 ```sh
-VERSION=v1.1 make release-dry
+VERSION=v1.3.0 make release-dry
 ```
 
-`VERSION` acepta `1.1` o `v1.1`; el tag siempre queda como `v1.1`. Sin `VERSION`
-en el entorno rige el default del Makefile, que apunta a la ultima release.
+`VERSION` acepta `1.3.0` o `v1.3.0`; el tag siempre queda como `v1.3.0`. Sin
+`VERSION` en el entorno rige el default del Makefile, que apunta a la ultima
+release.
+
+Tienen que ser **tres numeros**. El proxy de modulos de Go solo reconoce semver
+canonico, asi que un tag `v1.3` existe en el repo pero queda invisible para
+`go install` — que es exactamente lo que le paso a `v1.1`. `make release` lo
+rechaza antes de compilar nada.
 
 Los binarios quedan versionados en el repo, unos 1.7 MiB por release ya
 comprimidos por git. `dist/` sigue ignorado, para que compilar durante el
@@ -297,3 +326,7 @@ chequeo de certificado. Por eso se sondea una sola vez por direccion y se
 cachea: los refrescos posteriores solo re-chequean socket y expiracion.
 `--probe-always` reconstruye la matriz en cada ciclo, y la tecla `p` fuerza un
 re-sondeo puntual.
+
+## Licencia
+
+BSD 2-Clause. Ver [`LICENSE`](LICENSE).

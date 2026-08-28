@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lacniclabs/certop/internal/inventory"
+	"github.com/carlosm3011/certop/internal/inventory"
 )
 
 // scriptedServer levanta un servidor que habla el preambulo con speak y, si

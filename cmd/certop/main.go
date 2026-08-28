@@ -13,10 +13,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/lacniclabs/certop/internal/inventory"
-	"github.com/lacniclabs/certop/internal/probe"
-	"github.com/lacniclabs/certop/internal/report"
-	"github.com/lacniclabs/certop/internal/ui"
+	"github.com/carlosm3011/certop/internal/inventory"
+	"github.com/carlosm3011/certop/internal/probe"
+	"github.com/carlosm3011/certop/internal/report"
+	"github.com/carlosm3011/certop/internal/ui"
 )
 
 // version la sobreescribe el Makefile con -ldflags -X, agregandole la revision

@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lacniclabs/certop/internal/inventory"
-	"github.com/lacniclabs/certop/internal/probe"
+	"github.com/carlosm3011/certop/internal/inventory"
+	"github.com/carlosm3011/certop/internal/probe"
 )
 
 var checkedAt = time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC)

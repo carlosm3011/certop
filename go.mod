@@ -1,4 +1,4 @@
-module github.com/lacniclabs/certop
+module github.com/carlosm3011/certop
 
 go 1.27.0
 

@@ -1,0 +1,44 @@
+# Crea la release de GitHub cuando se pushea un tag de version.
+#
+# No compila nada: sube los binarios que `make release` ya dejo commiteados en
+# release/, para que los assets de GitHub y los de GitLab sean byte a byte los
+# mismos y un solo SHA256SUMS valga para los dos.
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Necesario para leer el mensaje del tag anotado.
+          fetch-depth: 0
+
+      # Un tag pusheado a mano no trae los binarios: mejor fallar aca que crear
+      # una release vacia. Mismo control que hace el pipeline de GitLab.
+      - name: verificar los binarios del tag
+        run: |
+          for file in certop-linux-amd64 certop-darwin-arm64 SHA256SUMS; do
+            test -f "release/$file" ||
+              { echo "falta release/$file en ${GITHUB_REF_NAME}. ¿Se libero con 'make release'?" >&2; exit 1; }
+          done
+
+      - name: crear la release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          notes=$(git tag -l --format='%(contents)' "$GITHUB_REF_NAME")
+          [ -n "$notes" ] || notes="certop ${GITHUB_REF_NAME#v}"
+          gh release create "$GITHUB_REF_NAME" \
+            --title "certop ${GITHUB_REF_NAME#v}" \
+            --notes "$notes" \
+            release/certop-linux-amd64 \
+            release/certop-darwin-arm64 \
+            release/SHA256SUMS

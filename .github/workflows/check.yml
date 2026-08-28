@@ -1,0 +1,30 @@
+# vet + tests en cada push y cada PR. Es lo que el GitLab interno nunca pudo
+# correr por no tener un runner con Go.
+name: check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          # La version sale del go.mod, para que no haya dos lugares que actualizar.
+          go-version-file: go.mod
+
+      - name: vet + test
+        run: make check
+
+      # La prueba de la UI es la que importa aca: el detector de carreras
+      # necesita cgo, que en el runner de ubuntu esta disponible.
+      - name: detector de carreras
+        run: make race

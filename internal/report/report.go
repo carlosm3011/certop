@@ -11,7 +11,7 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/lacniclabs/certop/internal/probe"
+	"github.com/carlosm3011/certop/internal/probe"
 )
 
 // Formatos de salida validos.

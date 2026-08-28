@@ -19,7 +19,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/lacniclabs/certop/internal/inventory"
+	"github.com/carlosm3011/certop/internal/inventory"
 )
 
 // Result es el estado completo de un destino en un instante dado.

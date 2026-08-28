@@ -10,7 +10,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/lacniclabs/certop/internal/inventory"
+	"github.com/carlosm3011/certop/internal/inventory"
 )
 
 // errNoStartTLS marca que el servidor contesto bien pero no ofrece STARTTLS.

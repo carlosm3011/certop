@@ -1,5 +1,6 @@
 # Inventario de ejemplo. Cada tabla es un grupo; la clave `hosts` lista los
-# destinos en formato host:puerto.
+# destinos en formato host:puerto. Los nombres de aca son de los dominios
+# reservados para ejemplos (RFC 2606): cambialos por los tuyos.
 #
 # `expect` fija el nombre que se manda en SNI y contra el que se valida el
 # certificado. Sirve para los nodos que estan detras de un CNAME y cuyo
@@ -13,26 +14,30 @@
 # implicito.
 
 [frontends]
-expect = "rrdp.lacnic.net"
+expect = "rrdp.example.net"
 hosts = [
-  "rpki-fe-1.lacnic.net:443",
-  "rpki-fe-2.lacnic.net:443",
+  "fe-1.rrdp.example.net:443",
+  "fe-2.rrdp.example.net:443",
 ]
 
 [rpki-load-balancers]
-expect = "rrdp.lacnic.net"
+expect = "rrdp.example.net"
 hosts = [
-  "lb-rpki-1.lacnic.net:443",
-  "lb-rpki-2.lacnic.net:443",
-  "lb-rpki-3.lacnic.net:443",
+  "lb-1.example.net:443",
+  "lb-2.example.net:443",
+  "lb-3.example.net:443",
 ]
 
 [email]
 hosts = [
-  "mail.lacnic.net:25",
-  "mail.lacnic.net:993",
-  "mail.lacnic.net.uy:993",
-  "mail.lacnic.net.uy:465",
+  "mail.example.net:25",
+  "mail.example.net:993",
+  "mx.example.org:993",
+  "mx.example.org:465",
   # Una entrada puede traer su propio expect y pisar el del grupo:
-  # { addr = "webmail.lacnic.net:443", expect = "mail.lacnic.net" },
+  # { addr = "webmail.example.net:443", expect = "mail.example.net" },
+  # Y su propio starttls, para un puerto que no se infiere o para forzar
+  # TLS implicito en uno que si:
+  # { addr = "smtp.example.net:2525", starttls = "smtp" },
+  # { addr = "raro.example.net:143",  starttls = "none" },
 ]

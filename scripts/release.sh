@@ -1,14 +1,19 @@
 #!/usr/bin/env bash
 #
-# Publica una release de certop.
+# Publica una release de certop en los dos remotos: el GitLab interno y el
+# GitHub publico.
 #
-# No hay runner con Go, asi que los binarios se compilan aca y se commitean en
-# release/. El pipeline de GitLab solo crea el objeto Release apuntando a los
-# archivos del repo, y no hace falta ningun token: todo viaja por ssh con la
-# llave que ya usas para pushear.
+# El GitLab interno no tiene runner con Go, asi que los binarios se compilan
+# aca y se commitean en release/. Los dos pipelines solo crean el objeto Release
+# apuntando a esos archivos, de modo que los assets de los dos lados son byte a
+# byte los mismos. No hace falta ningun token: git viaja por ssh con la llave
+# que ya usas, y cada CI usa el token que se inyecta solo.
 #
-#   VERSION=v1.1 make release
-#   VERSION=v1.1 make release-dry   # muestra que haria, sin tocar nada
+#   VERSION=v1.3.0 make release
+#   VERSION=v1.3.0 make release-dry   # muestra que haria, sin tocar nada
+#
+# REMOTES pisa la lista de remotos (default: "origin github"); los que no estan
+# configurados se saltean con un aviso.
 #
 set -euo pipefail
 
@@ -27,11 +32,33 @@ DRY_RUN="${DRY_RUN:-0}"
 DISTDIR="${DISTDIR:-dist}"
 RELEASEDIR="${RELEASEDIR:-release}"
 
-# "1.1" y "v1.1" son lo mismo; el tag siempre lleva la v.
+# "1.3.0" y "v1.3.0" son lo mismo; el tag siempre lleva la v.
 RELVERSION="${VERSION#v}"
 TAG="v${RELVERSION}"
 
+# Tres numeros, no dos. El proxy de modulos de Go solo reconoce semver canonico:
+# un tag "v1.3" existe en el repo pero queda invisible para `go install`, que es
+# justamente como quedo v1.1. Mejor rechazarlo antes de compilar nada.
+printf '%s' "$RELVERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$' ||
+	die "VERSION='${VERSION}' no es semver de tres numeros (ej. 1.3.0): go install no veria ese tag"
+
 say "certop ${RELVERSION}  ->  tag ${TAG}, binarios en ${RELEASEDIR}/"
+
+# ---- remotos -----------------------------------------------------------------
+# La release sale hacia los dos lados. Un clon que solo tenga uno igual puede
+# liberar, para no obligar a configurar el otro.
+
+REMOTES="${REMOTES:-origin github}"
+remotes=""
+for remote in $REMOTES; do
+	if git remote get-url "$remote" >/dev/null 2>&1; then
+		remotes="${remotes}${remotes:+ }${remote}"
+	else
+		say "aviso: el remoto '${remote}' no esta configurado, se saltea"
+	fi
+done
+[ -n "$remotes" ] || die "no hay ninguno de estos remotos: ${REMOTES}"
+say "remotos: ${remotes}"
 
 # ---- controles previos -------------------------------------------------------
 # Todos antes de tocar nada: una release a medias es peor que una que no salio.
@@ -47,14 +74,16 @@ if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
 	die "el tag ${TAG} ya existe localmente"
 fi
 
-say "sincronizando con el remoto"
-git fetch -q origin main
-[ "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" ] ||
-	die "HEAD no coincide con origin/main; pushea o traete los cambios primero"
+say "sincronizando con los remotos"
+for remote in $remotes; do
+	git fetch -q "$remote" main
+	[ "$(git rev-parse HEAD)" = "$(git rev-parse "${remote}/main")" ] ||
+		die "HEAD no coincide con ${remote}/main; pushea o traete los cambios primero"
 
-if git ls-remote --tags --exit-code origin "refs/tags/${TAG}" >/dev/null 2>&1; then
-	die "el tag ${TAG} ya existe en el remoto"
-fi
+	if git ls-remote --tags --exit-code "$remote" "refs/tags/${TAG}" >/dev/null 2>&1; then
+		die "el tag ${TAG} ya existe en ${remote}"
+	fi
+done
 
 # ---- compilar y firmar -------------------------------------------------------
 
@@ -102,21 +131,40 @@ if [ "$DRY_RUN" != 1 ] && git diff --cached --quiet; then
 fi
 run git commit -m "certop ${RELVERSION}: binarios de la release"
 
-# El commit tiene que estar en el remoto antes que el tag: la release enlaza a
-# los archivos del repo en ese tag.
+# El commit tiene que estar en los remotos antes que el tag: la release de
+# GitLab enlaza a los archivos del repo en ese tag.
 say "pusheando main"
-run git push origin main
+for remote in $remotes; do
+	run git push "$remote" main
+done
 
-say "creando y pusheando ${TAG} (dispara el pipeline de release)"
+say "creando ${TAG}"
 run git tag -a "$TAG" -m "$notes"
-run git push origin "$TAG"
+for remote in $remotes; do
+	say "pusheando ${TAG} a ${remote} (dispara el pipeline de release)"
+	run git push "$remote" "$TAG"
+done
 
 say "listo"
 if [ "$DRY_RUN" = 1 ]; then
 	printf '    (dry-run: no se modifico, commiteo ni pusheo nada)\n'
 else
-	remote=$(git remote get-url origin)
-	web=$(printf '%s' "$remote" | sed -E 's#^git@([^:]+):#https://\1/#; s#\.git$##')
-	printf '    pipeline: %s/-/pipelines\n' "$web"
-	printf '    release:  %s/-/releases/%s\n' "$web" "$TAG"
+	for remote in $remotes; do
+		url=$(git remote get-url "$remote")
+		web=$(printf '%s' "$url" |
+			sed -E 's#^git@([^:]+):#https://\1/#; s#^ssh://git@([^/]+)/#https://\1/#; s#\.git$##')
+		case "$web" in
+		https://github.com/*)
+			printf '    %-8s %s/actions\n' "$remote" "$web"
+			printf '    %-8s %s/releases/tag/%s\n' "$remote" "$web" "$TAG"
+			;;
+		https://*)
+			printf '    %-8s %s/-/pipelines\n' "$remote" "$web"
+			printf '    %-8s %s/-/releases/%s\n' "$remote" "$web" "$TAG"
+			;;
+		*)
+			printf '    %-8s %s (no parece una URL web)\n' "$remote" "$url"
+			;;
+		esac
+	done
 fi

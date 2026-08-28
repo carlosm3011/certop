@@ -150,7 +150,7 @@ chequeo de monitoreo sin parsear la salida.
 
 ## Stack
 
-Go 1.27 o superior. El Makefile compila por defecto para linux/amd64 y linux/arm64;
+Go 1.27 o superior. El Makefile compila por defecto para linux/amd64 y darwin/arm64;
 `make build` genera el binario de la plataforma local y `make check` corre vet y pruebas.
 
 La pantalla de refresco se implementa sobre **tcell**, manejando directamente el buffer

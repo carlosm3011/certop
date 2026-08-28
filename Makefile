@@ -6,7 +6,8 @@ DISTDIR := dist
 # Los binarios de las releases se versionan aca; dist/ queda ignorado.
 RELEASEDIR := release
 # Version declarada del proyecto. Se puede pisar desde el entorno, con o sin la
-# v inicial: `VERSION=v1.1 make release`.
+# v inicial: `VERSION=v1.3.0 make release`. Tienen que ser tres numeros:
+# el proxy de modulos de Go ignora un tag de dos (ver scripts/release.sh).
 VERSION ?= 1.2.0
 # Version sin la v; el tag siempre la lleva.
 RELVERSION := $(VERSION:v%=%)
@@ -68,7 +69,7 @@ vet:
 .PHONY: check
 check: vet test
 
-## release: compila, commitea los binarios y pushea el tag (VERSION=v1.1 make release)
+## release: compila, commitea los binarios y pushea el tag a los dos remotos
 .PHONY: release
 release:
 	@VERSION=$(RELVERSION) DISTDIR=$(DISTDIR) RELEASEDIR=$(RELEASEDIR) scripts/release.sh
@@ -98,3 +99,4 @@ help:
 	@echo "  VERSION   version del proyecto, con o sin v (default: $(VERSION); se embebe $(FULLVERSION))"
 	@echo "  DISTDIR   directorio de salida de dist (default: $(DISTDIR))"
 	@echo "  RELEASEDIR  binarios versionados de las releases (default: $(RELEASEDIR))"
+	@echo "  REMOTES   remotos a los que se publica la release (default: origin github)"

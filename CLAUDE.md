@@ -95,24 +95,39 @@ These were found the hard way — don't undo them:
 
 ## Releases
 
-No Go runner exists on the GitLab instance, so binaries are built **locally** by
-`scripts/release.sh` (`make release`) and **committed to `release/`**; the pipeline
-(`scripts/gitlab-release.sh`, shell runner, curl only) creates the Release object with
-asset links pointing at the repo's raw files at that tag. **No token anywhere** — git goes
-over ssh, CI uses `CI_JOB_TOKEN`.
+The repo has **two homes**: an internal GitLab (`origin`) and the public GitHub
+(`github`, `carlosm3011/certop`). `make release` pushes `main` and the tag to both, and
+each side's CI builds its own Release object from the **same committed binaries** — so
+one `SHA256SUMS` is valid for both and there is never a question of which binary is
+authoritative.
 
-- Order matters: the release commit must be pushed to `main` *before* the tag, since the
-  asset URLs resolve files at the tag. Don't reorder those steps.
+No Go runner exists on the GitLab instance, so binaries are built **locally** by
+`scripts/release.sh` (`make release`) and **committed to `release/`**. GitLab's pipeline
+(`scripts/gitlab-release.sh`, shell runner, curl only) links the repo's raw files at that
+tag; GitHub's (`.github/workflows/release.yml`) uploads them as real release assets.
+**No token anywhere** — git goes over ssh, CI uses `CI_JOB_TOKEN` / `GITHUB_TOKEN`.
+
+- Order matters: the release commit must be pushed to `main` *before* the tag, since
+  GitLab's asset URLs resolve files at the tag. Don't reorder those steps.
+- **Tags must be three-part semver.** Go's module proxy only recognises canonical semver,
+  so `v1.3` is invisible to `go install` — which is exactly what happened to `v1.1`, and
+  why `release.sh` now rejects a two-part version before building anything.
+- `v0.9.1`, `v1.1` and `v1.2.0` predate the GitHub move and declare the old module path
+  `github.com/lacniclabs/certop`. `go install` works from **1.3.0 onward only**.
 - `release/` is tracked; `dist/` stays gitignored so ordinary `make dist` doesn't dirty
   the tree. Roughly 1.7 MiB per release, measured.
 - `make release` also rewrites `VERSION ?=` in the Makefile so the default follows the
   last release.
-- `VERSION` accepts `1.1` or `v1.1`; the tag is always `v`-prefixed.
+- `VERSION` accepts `1.3.0` or `v1.3.0`; the tag is always `v`-prefixed. `REMOTES`
+  overrides the remote list (default `origin github`); missing ones are skipped.
 - `make release-dry` runs everything without touching, committing or pushing.
-- The CI script uses `jq` when present to put the tag message in the release description,
-  and falls back to a generated one otherwise — never hand-escape the tag message.
+- The GitLab CI script uses `jq` when present to put the tag message in the release
+  description, and falls back to a generated one otherwise — never hand-escape the tag
+  message. The GitHub workflow needs `fetch-depth: 0` to read that same tag message.
 - The `+sha` in `--version` is the commit the binary was *built from*, necessarily one
   before the commit that contains it.
+- `.github/workflows/check.yml` runs `make check` and `make race` on push and PR. This is
+  the one thing the internal GitLab could never do; don't let it rot.
 
 ## STARTTLS
 

@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lacniclabs/certop/internal/inventory"
+	"github.com/carlosm3011/certop/internal/inventory"
 )
 
 // mint emite un certificado. Si parent es nil el certificado es autofirmado.

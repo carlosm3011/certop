@@ -9,7 +9,9 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"slices"
+	"strings"
 	"syscall"
 	"time"
 
@@ -20,8 +22,29 @@ import (
 )
 
 // version la sobreescribe el Makefile con -ldflags -X, agregandole la revision
-// de git; este valor es el que queda al compilar con go build a secas.
-var version = "1.0"
+// de git. Queda vacia cuando se compila sin pasar por el Makefile.
+var version = ""
+
+// resolveVersion devuelve la version a mostrar.
+//
+// Con `go install modulo@vX.Y.Z` el Makefile no interviene y los -ldflags no se
+// aplican, asi que el unico lugar donde queda la version es el build info que
+// embebe el toolchain. Antes aca habia un literal de respaldo, y el resultado
+// era que todo binario instalado con go install decia ser esa version fija sin
+// importar cual fuera: un reporte de bug traia el numero equivocado.
+func resolveVersion() string {
+	if version != "" {
+		return version
+	}
+	if bi, ok := debug.ReadBuildInfo(); ok {
+		// "(devel)" es lo que pone el toolchain al compilar desde un arbol
+		// de trabajo, donde no hay ninguna version que reportar.
+		if v := bi.Main.Version; v != "" && v != "(devel)" {
+			return strings.TrimPrefix(v, "v")
+		}
+	}
+	return "desconocida"
+}
 
 type options struct {
 	once        bool
@@ -66,7 +89,7 @@ func run(args []string, stdout, stderr *os.File) int {
 	}
 
 	if opt.showVersion {
-		fmt.Fprintf(stdout, "certop %s\n", version)
+		fmt.Fprintf(stdout, "certop %s\n", resolveVersion())
 		return report.ExitOK
 	}
 	if err := validate(&opt, fs); err != nil {

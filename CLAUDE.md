@@ -147,6 +147,10 @@ formula after a release is a manual second step and the thing most likely to rot
   `ldflags:` with the version.
 - Homebrew's `go` is 1.27.0, which is exactly what `go.mod` requires. If `go.mod` ever
   moves ahead of the formula's Go, the tap breaks before anything else does.
+- Bumping after a release is two commands, in the tap's clone:
+  `scripts/brew-formula.sh vX.Y.Z > Formula/certop.rb` then commit and push. Verify with
+  `brew upgrade certop && brew test certop`; `brew audit --strict carlosm3011/certop/certop`
+  must exit 0.
 
 ## macOS code signing
 

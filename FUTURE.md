@@ -6,12 +6,11 @@ Cada entrada tiene un identificador estable tipo `FUT-3`, para poder referirse a
 ella sin repetir el titulo. Los numeros no se reciclan: si una entrada se
 resuelve o se descarta, su numero se retira con ella.
 
-Resueltos: FUT-5 (STARTTLS para smtp, imap y pop3).
+Resueltos: FUT-5 (STARTTLS para smtp, imap y pop3), FUT-7 (tap de Homebrew,
+en carlosm3011/homebrew-certop).
 
 ## FUT-6 - testear AFs independientemente
 Agregar flags -4 y -6 que permitan testear ipv4 o ipv6 separadamente, pero manteniendo el default en testear ambas igual que ahora.
-
-## FUT-7 - crear un "tap" para homebrew para que sea facil de instalar el binario por terceros.
 
 ## FUT-8 - macOS bloquea el binario: "desarrollador desconocido"
 
@@ -21,9 +20,10 @@ un Developer ID. `spctl -a -t execute` lo rechaza, asi que Gatekeeper lo bloquea
 en cualquier Mac que lo reciba **con el atributo de cuarentena** — que lo pone
 el navegador que lo descarga, y no `curl`.
 
-Mitigado documentando la descarga por `curl` y el `xattr -d` de respaldo (README,
-seccion Instalar), y por el tap de Homebrew (FUT-7), que compila desde la fuente
-y no toca binarios descargados.
+Mitigado desde 1.3.0 documentando la descarga por `curl` y el `xattr -d` de
+respaldo (README, seccion Instalar), y sobre todo por el tap de Homebrew, que
+compila desde la fuente: el binario que instala `brew` queda igual de ad-hoc
+firmado, pero sin atributo de cuarentena, asi que Gatekeeper ni lo evalua.
 
 Lo que queda pendiente cuesta plata: firmar con un **Developer ID Application** y
 notarizar. Son USD 99/ano de Apple Developer Program, que hoy no tenemos. Notas

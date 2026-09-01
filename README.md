@@ -10,6 +10,17 @@ validez, y que versiones de TLS acepta el servidor. Corre en una pasada unica
 
 ## Instalar
 
+En macOS, con Homebrew:
+
+```sh
+brew install carlosm3011/certop/certop
+```
+
+Compila desde la fuente, asi que anda igual en Apple Silicon y en Mac Intel, y
+no aparece el aviso de Gatekeeper que se explica mas abajo.
+
+Con Go, en cualquier plataforma:
+
 ```sh
 go install github.com/carlosm3011/certop/cmd/certop@latest
 ```

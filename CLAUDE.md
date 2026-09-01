@@ -129,6 +129,35 @@ tag; GitHub's (`.github/workflows/release.yml`) uploads them as real release ass
 - `.github/workflows/check.yml` runs `make check` and `make race` on push and PR. This is
   the one thing the internal GitLab could never do; don't let it rot.
 
+## Homebrew
+
+The tap is a **separate repo**, `carlosm3011/homebrew-certop` — Homebrew requires the
+`homebrew-` prefix, so it cannot live here. `make release` does not touch it; bumping the
+formula after a release is a manual second step and the thing most likely to rot.
+
+- `scripts/brew-formula.sh v1.3.1` prints the whole formula with the tarball's sha256.
+  The tag must already be **pushed to GitHub** — the hash comes from downloading it, and
+  the script uses `curl --fail` so a 404 doesn't get hashed into a plausible-looking
+  formula.
+- The formula **builds from source**, deliberately. It covers Intel Macs (only
+  `darwin/arm64` is published as a binary) and it dissolves FUT-8: nothing is downloaded,
+  so nothing is quarantined and Gatekeeper never runs.
+- `std_go_args` already emits `-trimpath` and prepends `-s -w`. There is **no `trimpath:`
+  keyword** — passing one raises `ArgumentError` and the formula dies. Pass only
+  `ldflags:` with the version.
+- Homebrew's `go` is 1.27.0, which is exactly what `go.mod` requires. If `go.mod` ever
+  moves ahead of the formula's Go, the tap breaks before anything else does.
+
+## macOS code signing
+
+Released `darwin/arm64` binaries carry only the **ad-hoc signature Go's linker applies
+automatically** (`adhoc, linker-signed`); there is no Developer ID and no Apple Developer
+Program membership. `spctl -a -t execute` reports `rejected` — that is expected, not a
+regression. It only bites users who download through a **browser**, which sets
+`com.apple.quarantine`; `curl` and `wget` do not. README documents the `curl` download and
+the `xattr -d` fallback. See FUT-8 for the notarization path and why a bare Mach-O cannot
+be stapled.
+
 ## STARTTLS
 
 `Checker.handshake` is the single choke point both TLS paths go through (the certificate

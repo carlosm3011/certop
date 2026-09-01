@@ -19,6 +19,34 @@ anteriores declaran otro module path y `go install` los rechaza. Tambien hay
 binarios ya compilados para linux/amd64 y darwin/arm64 en cada
 [release](https://github.com/carlosm3011/certop/releases).
 
+### Bajar el binario
+
+```sh
+curl -L -o certop https://github.com/carlosm3011/certop/releases/latest/download/certop-darwin-arm64
+chmod +x certop
+```
+
+Cambiar el nombre por `certop-linux-amd64` segun la plataforma. El `SHA256SUMS`
+de cada release cubre los dos binarios, y es el mismo archivo en GitHub y en el
+GitLab interno.
+
+### macOS: "no se puede verificar el desarrollador"
+
+Los binarios no estan firmados con un Developer ID de Apple: llevan solo la
+firma ad-hoc que el linker de Go le pone a todo binario arm64. Gatekeeper los
+bloquea, pero **solo si llegan con el atributo de cuarentena**, que lo pone el
+navegador que los descarga. `curl` y `wget` no lo ponen: bajarlo con el comando
+de arriba evita el problema por completo.
+
+Si ya lo bajaste con el navegador:
+
+```sh
+xattr -d com.apple.quarantine ./certop
+```
+
+Compilar desde la fuente (`go install` o `make build`) tampoco pasa por
+Gatekeeper, porque el binario nunca estuvo en cuarentena.
+
 ## Compilar
 
 ```sh

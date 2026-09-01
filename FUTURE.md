@@ -8,6 +8,38 @@ resuelve o se descarta, su numero se retira con ella.
 
 Resueltos: FUT-5 (STARTTLS para smtp, imap y pop3).
 
+## FUT-6 - testear AFs independientemente
+Agregar flags -4 y -6 que permitan testear ipv4 o ipv6 separadamente, pero manteniendo el default en testear ambas igual que ahora.
+
+## FUT-7 - crear un "tap" para homebrew para que sea facil de instalar el binario por terceros.
+
+## FUT-8 - macOS bloquea el binario: "desarrollador desconocido"
+
+El binario `darwin/arm64` lleva solo la firma ad-hoc que el linker de Go aplica
+por defecto (`codesign -dvvv` reporta `flags=0x20002(adhoc,linker-signed)`), no
+un Developer ID. `spctl -a -t execute` lo rechaza, asi que Gatekeeper lo bloquea
+en cualquier Mac que lo reciba **con el atributo de cuarentena** — que lo pone
+el navegador que lo descarga, y no `curl`.
+
+Mitigado documentando la descarga por `curl` y el `xattr -d` de respaldo (README,
+seccion Instalar), y por el tap de Homebrew (FUT-7), que compila desde la fuente
+y no toca binarios descargados.
+
+Lo que queda pendiente cuesta plata: firmar con un **Developer ID Application** y
+notarizar. Son USD 99/ano de Apple Developer Program, que hoy no tenemos. Notas
+para cuando se decida:
+
+- `codesign --timestamp --options runtime` y despues `xcrun notarytool submit`.
+- Un Mach-O suelto **no se puede estaplar**: `stapler` solo acepta `.dmg`, `.pkg`
+  o `.app`. Un `certop-darwin-arm64` pelado, aun notarizado, necesita consulta en
+  linea a Apple en la primera corrida, y sigue bloqueado en una maquina sin red.
+  Resolverlo de verdad implica publicar un contenedor en vez del binario suelto,
+  y eso cambia que hay en `release/` y que cubre el `SHA256SUMS`.
+- La firma iria en `scripts/release.sh`, que ya compila local: el certificado
+  queda en esta Mac y la CI sigue sin necesitar ningun token.
+- No hay binario `darwin/amd64`. Las Mac Intel hoy solo tienen `go install`, el
+  tap, o compilar a mano.
+
 ## FUT-1 — `--init`: generar un hosts.toml de arranque
 
 Un flag que cree un `hosts.toml` por defecto, con algun destino conocido como

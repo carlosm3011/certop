@@ -8,7 +8,7 @@ RELEASEDIR := release
 # Version declarada del proyecto. Se puede pisar desde el entorno, con o sin la
 # v inicial: `VERSION=v1.3.0 make release`. Tienen que ser tres numeros:
 # el proxy de modulos de Go ignora un tag de dos (ver scripts/release.sh).
-VERSION ?= 1.3.0
+VERSION ?= 1.3.1
 # Version sin la v; el tag siempre la lleva.
 RELVERSION := $(VERSION:v%=%)
 TAG        := v$(RELVERSION)
